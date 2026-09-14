@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "fix/**"]
+  pull_request:
+
+jobs:
+  test:
+    name: Build & test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      # Compiles and runs the fixture-based contract/lifecycle suites.
+      # No real Hermes home is needed: tests use a scripted executor and
+      # synthetic python subprocesses. Nothing installs into ~/Applications.
+      - name: Run tests
+        run: ./tests/run-tests.sh
+
+      # Package the app into the runner's build/ dir WITHOUT installing:
+      # the collector files are staged from this checkout's build/ (kept in
+      # git for this purpose); a missing upstream checkout fails validation,
+      # so seed COLLECTOR_SRC from the tracked copies.
+      - name: Package app bundle (no install)
+        env:
+          COLLECTOR_SRC: ${{ github.workspace }}/.ci-collector
+          HERMES_USAGE_INSTALL_DIR: ${{ runner.temp }}/apps
+        run: |
+          mkdir -p .ci-collector/collector .ci-collector/hermes-usage-export
+          cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py .ci-collector/collector/
+          cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py .ci-collector/hermes-usage-export/
+          ./build.sh
+          codesign --verify --deep build/HermesUsage.app
+          test -x build/HermesUsage.app/Contents/MacOS/HermesUsage
+          echo "packaged OK (not installed)"
