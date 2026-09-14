@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "fix/**"]
+    branches: [main, "fix/**", "feat/**"]
   pull_request:
 
 jobs:
@@ -10,10 +10,20 @@ jobs:
     name: Build & test (macOS)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
+
+      # Deterministic Python for make_icon.py (Pillow). The runner's system
+      # Python has no Pillow and is externally managed — use a pinned
+      # setup-python interpreter instead of depending on runner images.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow (icon generation)
+        run: python3 -m pip install pillow
 
       # Compiles and runs the fixture-based contract/lifecycle suites.
       # No real Hermes home is needed: tests use a scripted executor and
