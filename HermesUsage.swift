@@ -134,10 +134,23 @@ struct CollectorError: LocalizedError {
 
 @MainActor
 final class UsageModel: ObservableObject {
+    /// Distinct lifecycle states (R6). Separate "never loaded" from "failed
+    /// with no prior record" so the menu bar can warn, and from "no data"
+    /// so an empty install can show a deliberate empty state.
+    enum LoadState: Equatable {
+        case initial
+        case loading
+        case success
+        case noData        // collector said hasLocalStats=false
+        case failed(String)  // error with no prior record
+        case stale(String)   // error but prior record retained
+    }
+
     @Published var record: UsageRecord?
     @Published var errorText: String?
     @Published var updatedAt: Date?
     @Published var isLoading = false
+    @Published var loadState: LoadState = .initial
     /// True when the last refresh failed but we still show a previous record.
     @Published var isStale = false
 
@@ -169,9 +182,13 @@ final class UsageModel: ObservableObject {
     }
 
     /// Refresh on popover open only when the data is stale (failed last time,
-    /// older than the auto interval, or from a previous day).
+    /// older than the auto interval, or from a previous day) (R6: also retry
+    /// initial failures).
     func refreshIfStale() {
         guard !isLoading else { return }
+        // Retry initial failures and stale states
+        if case .initial = loadState { refresh(); return }
+        if case .failed = loadState { refresh(); return }
         if isStale || isDayStale { refresh(); return }
         if let t = updatedAt, Date().timeIntervalSince(t) >= refreshInterval { refresh() }
     }
@@ -183,12 +200,19 @@ final class UsageModel: ObservableObject {
         return !Calendar.current.isDateInToday(t)
     }
 
-    var menuBarWarning: Bool { isStale || isDayStale }
+    var menuBarWarning: Bool {
+        // R6: warn on failure regardless of prior record
+        if isStale { return true }
+        if isDayStale { return true }
+        if case .failed = loadState { return true }
+        return false
+    }
 
     func refresh() {
         guard !isLoading else { return }
         isLoading = true
         errorText = nil
+        loadState = .loading
         let path = collectorPath
         Task.detached(priority: .utility) {
             let result = Self.runCollector(path: path)
@@ -198,6 +222,12 @@ final class UsageModel: ObservableObject {
                 case .success(let data):
                     let decoder = JSONDecoder()
                     if let rec = try? decoder.decode(UsageRecord.self, from: data) {
+                        // R6: distinguish no-data from success
+                        if rec.hasLocalStats == false {
+                            self.loadState = .noData
+                        } else {
+                            self.loadState = .success
+                        }
                         self.record = rec
                         self.updatedAt = Date()
                         self.isStale = false
@@ -205,10 +235,12 @@ final class UsageModel: ObservableObject {
                     } else {
                         self.isStale = (self.record != nil)
                         self.errorText = "Could not parse collector output"
+                        self.loadState = self.record != nil ? .stale("Could not parse collector output") : .failed("Could not parse collector output")
                     }
                 case .failure(let err):
                     self.isStale = (self.record != nil)
                     self.errorText = err.localizedDescription
+                    self.loadState = self.record != nil ? .stale(err.localizedDescription) : .failed(err.localizedDescription)
                 }
             }
         }
