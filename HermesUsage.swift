@@ -156,6 +156,15 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
     return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
 }
 
+// MARK: - F5: Provider cost helpers
+
+/// F5: True when any provider row has a nil cost (so the legend should show
+/// even when the aggregate is known).
+func hasNilProviderCost(_ rec: UsageRecord) -> Bool {
+    guard let providerUsage = rec.providerUsage else { return false }
+    return providerUsage.values.contains { $0.estimatedCostUsd == nil }
+}
+
 // MARK: - B2: Workload helpers (free functions for testability)
 
 /// B2: Priority for task sorting (lower = appears first).
@@ -652,7 +661,10 @@ final class UsageModel: ObservableObject {
                         if rec.hasLocalStats == false {
                             // A3: hasLocalStats=false + truncated=true means stores exist but
                             // couldn't be read, not genuine emptiness. If we have a prior
-                            // record, retain it as stale; otherwise show unreadable state.
+                            // valid record, retain it as stale; otherwise show unreadable.
+                            // F2: never store an unreadable envelope as a record — it is an
+                            // error, not data. Repeated unreadable results must stay
+                            // .unreadable, not become false "saved results".
                             if rec.details?.truncated == true {
                                 let msg = "Couldn't read local usage"
                                 if self.record != nil {
@@ -661,10 +673,10 @@ final class UsageModel: ObservableObject {
                                     self.errorText = msg
                                 } else {
                                     self.loadState = .unreadable(msg)
-                                    self.record = rec
-                                    self.updatedAt = Date()
                                     self.isStale = false
                                     self.errorText = msg
+                                    // F2: do NOT set record or updatedAt — an unreadable
+                                    // envelope is not valid usage data
                                 }
                             } else {
                                 self.loadState = .noData
@@ -741,15 +753,19 @@ struct WeekBars: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
+                        .accessibilityHidden(true)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(fillColor(day))
                         .frame(height: barHeight(day))
+                        .accessibilityHidden(true)
                     Text(dayLabel(day.date))
                         .font(.caption.weight(isToday(day.date) ? .bold : .regular))
                         .foregroundStyle(isToday(day.date) ? Color.primary : Color.secondary)
+                        .accessibilityHidden(true)
                 }
                 .frame(maxWidth: .infinity)
                 .help(barHelp(day))
+                .accessibilityElement()
                 .accessibilityLabel(barHelp(day))
             }
         }
@@ -789,13 +805,10 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            // A3/A6: error banner only for stale (prior record retained) and
-            // generic failed states. noStores/unreadable/unrecognized render
-            // their own distinct content in the main area.
+            // A3/A6: error banner only for stale (prior record retained).
+            // F1: .failed now renders its own full diagnostic in failedSection.
             if case .stale = model.loadState {
                 staleBanner(model.errorText ?? "Update failed")
-            } else if case .failed = model.loadState {
-                errorBanner(model.errorText ?? "Update failed")
             }
             Divider()
                 .padding(.horizontal, 14)
@@ -827,9 +840,9 @@ struct ContentView: View {
             unreadableSection(diagnostic)
         case .unrecognized(let diagnostic):
             unrecognizedSection(diagnostic)
-        case .failed:
-            // Error banner shows above; no record to display
-            Spacer().frame(height: 8)
+        case .failed(let diagnostic):
+            // First-run failure: show wrapped diagnostic with retry
+            failedSection(diagnostic)
         case .noData:
             emptySection
         case .success, .stale:
@@ -966,6 +979,37 @@ struct ContentView: View {
         .padding(.vertical, 12)
     }
 
+    /// F1: first-run failure with wrapped diagnostic
+    private func failedSection(_ diagnostic: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Update failed", systemImage: "exclamationmark.triangle")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.red)
+            Text("The usage collector encountered an error and couldn't retrieve data.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(diagnostic)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.leading, 4)
+            } label: {
+                Text("Details")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Button("Retry") { model.refresh() }
+                .controlSize(.small)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 12)
+    }
+
     /// A6: valid JSON but not a valid usage record
     private func unrecognizedSection(_ diagnostic: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1023,9 +1067,11 @@ struct ContentView: View {
     }
 
     private func todaySection(_ rec: UsageRecord) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label("Today — estimated tokens", systemImage: "sun.max")
+        let dayLabel = model.updatedAt.map { dayAgeLabel(updatedAt: $0) } ?? "unknown"
+        return VStack(alignment: .leading, spacing: 4) {
+            Label("\(dayLabel.capitalized) — estimated tokens", systemImage: "sun.max")
                 .font(.subheadline.weight(.semibold))
+                .help("Collection timestamp: \(model.updatedAt?.formatted(date: .complete, time: .shortened) ?? "unknown")")
             HStack(spacing: 14) {
                 statCell(label: "Tokens",
                          value: compactTokens(Double(rec.todayTotalTokens ?? 0)),
@@ -1059,14 +1105,14 @@ struct ContentView: View {
         }
     }
 
+    /// F4: one labelled metric per accessibility element. Combines value+label
+    /// into a single Text so AX exposes "14.5M tokens" as one node.
     private func statCell(label: String, value: String, help: String?) -> some View {
         VStack(spacing: 1) {
-            Text(value)
+            Text("\(value) \(label)")
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .monospacedDigit()
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .accessibilityLabel("\(value) \(label)")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
@@ -1118,10 +1164,11 @@ struct ContentView: View {
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-            if rec.details?.totals?.estimatedUsd == nil {
+            if rec.details?.totals?.estimatedUsd == nil || hasNilProviderCost(rec) {
                 Text("— Cost unavailable; not zero")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .accessibilityLabel("Em-dash means cost unavailable; not zero")
             }
 
             // B3: Accounting evidence disclosure
@@ -1335,6 +1382,21 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
+                    // F3: column headers so values have meaning
+                    HStack {
+                        Text("Task")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Text("Calls")
+                            .frame(width: 36, alignment: .trailing)
+                        Text("Tokens")
+                            .frame(width: 44, alignment: .trailing)
+                        Text("Cost")
+                            .frame(width: 50, alignment: .trailing)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.bottom, 2)
+
                     ForEach(tasks, id: \.name) { task in
                         HStack {
                             Text(taskLabel(task.name))
@@ -1345,27 +1407,36 @@ struct ContentView: View {
                                 Text("\(calls)")
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
+                                    .frame(width: 36, alignment: .trailing)
+                                    .accessibilityLabel("\(calls) calls")
                             } else {
                                 Text("—")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .help("Calls not recorded")
+                                    .frame(width: 36, alignment: .trailing)
+                                    .accessibilityLabel("Calls not recorded")
                             }
                             if let tokens = task.tokens {
                                 Text(compactTokens(Double(tokens)))
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
+                                    .frame(width: 44, alignment: .trailing)
+                                    .accessibilityLabel("\(compactTokens(Double(tokens))) tokens")
                             } else {
                                 Text("—")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .help("Tokens not recorded")
+                                    .frame(width: 44, alignment: .trailing)
+                                    .accessibilityLabel("Tokens not recorded")
                             }
                             Text(compactCost(task.estimatedUsd))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .frame(width: 50, alignment: .trailing)
+                                .accessibilityLabel(task.estimatedUsd != nil ? "Cost \(compactCost(task.estimatedUsd))" : "Cost unavailable; not zero")
                                 .help(costHelp(task.estimatedUsd))
                         }
+                        .accessibilityElement(children: .combine)
                     }
                 }
 

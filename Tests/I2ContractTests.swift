@@ -436,7 +436,8 @@ struct I2Tests {
             if case .unreadable = m.loadState { expect(true, "state .unreadable") }
             else { expect(false, "state .unreadable, got \(m.loadState)") }
             expect(m.menuBarWarning, "menu bar warns on unreadable")
-            expect(m.record != nil, "record stored for context")
+            // F2: do NOT store record — unreadable envelope is error, not data
+            expect(m.record == nil, "no record stored for unreadable (F2)")
         }
 
         print("A3: unreadable AFTER success → stale with retained record")
@@ -722,6 +723,53 @@ struct I2Tests {
             expect(withUnknown == "50 reported calls; call count unavailable for 5 usage rows", "50 calls with 5 unknown rows")
             let singular = formatCallAvailability(calls: 10, unknownCallRows: 1)
             expect(singular == "10 reported calls; call count unavailable for 1 usage row", "10 calls with 1 unknown row (singular)")
+        }
+
+        // F2: repeated unreadable must stay .unreadable, not become false saved-results
+        print("F2: repeated unreadable stays .unreadable (no false saved-results)")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unreadable = m.loadState { expect(true, "first unreadable → .unreadable") }
+            else { expect(false, "first unreadable → .unreadable, got \(m.loadState)") }
+            expect(m.record == nil, "no record after first unreadable")
+            // Retry: second unreadable must still be .unreadable, not .stale
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            if case .unreadable = m.loadState { expect(true, "second unreadable stays .unreadable (F2)") }
+            else { expect(false, "second unreadable stays .unreadable (F2), got \(m.loadState)") }
+            expect(m.record == nil, "still no record after repeated unreadable (F2)")
+        }
+
+        // F5: hasNilProviderCost detects nil cost in provider rows
+        print("F5: hasNilProviderCost detects nil provider costs")
+        do {
+            let noProviders = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"details\":{\"totals\":{\"estimatedUsd\":1.5}}}"))
+            expect(!hasNilProviderCost(noProviders), "no providerUsage → false")
+
+            let allKnown = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.5},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":0.25}}}"))
+            expect(!hasNilProviderCost(allKnown), "all providers have costs → false")
+
+            let mixedCosts = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.5},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null}}}"))
+            expect(hasNilProviderCost(mixedCosts), "mixed costs (one nil) → true (F5)")
+
+            let allNil = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100},\"p2\":{\"tokens\":50}}}"))
+            expect(hasNilProviderCost(allNil), "all providers nil cost → true (F5)")
         }
 
         print("")
