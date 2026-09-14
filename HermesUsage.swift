@@ -989,9 +989,13 @@ struct ContentView: View {
     }
 
     private func totalsSection(_ rec: UsageRecord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("All-time", systemImage: "clock")
+        let truncated = rec.details?.truncated == true
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(truncated ? "All-time (partial)" : "All-time", systemImage: "clock")
                 .font(.subheadline.weight(.semibold))
+                .help(truncated
+                    ? "Totals from partial local collection — some older activity may be omitted."
+                    : "Totals from complete local collection on this Mac.")
             HStack(spacing: 10) {
                 let allTokens = rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0
                 totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(Double(allTokens)))
@@ -1019,7 +1023,7 @@ struct ContentView: View {
 
     private func costHelp(_ n: Double?) -> String {
         guard let n = n else { return "Cost not observed" }
-        return "Estimated cost USD \(compactCost(n))"
+        return "Recorded estimate: \(compactCost(n)); costs may be unreported by some providers"
     }
 
     private func totalChip(_ label: String, _ value: String, help: String) -> some View {
