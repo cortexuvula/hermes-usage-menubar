@@ -90,13 +90,6 @@ struct I2Tests {
 
         // ---- Lifecycle: success path ----
         print("I2/R6: lifecycle — success sets .success")
-        await MainActor.run {
-            let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                "{\"hasLocalStats\":true,\"todayTotalTokens\":42}")), elapsed: 0.1)])
-            let m = UsageModel(executor: ex, collectorTimeout: 5)
-            m.refresh() // already started once via init; force another
-        }
-        // (The init-triggered refresh consumed the scripted outcome; assert via state after drain.)
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(

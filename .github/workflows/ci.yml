@@ -17,17 +17,19 @@ jobs:
 
       # Compiles and runs the fixture-based contract/lifecycle suites.
       # No real Hermes home is needed: tests use a scripted executor and
-      # synthetic python subprocesses. Nothing installs into ~/Applications.
-      - name: Run tests
-        run: ./tests/run-tests.sh
+      # synthetic python subprocesses. Nothing installs into ~/Applications
+      # and nothing mutates the repository — the runner asserts a clean
+      # git tree after packaging.
+      - name: Run tests (suite + bundle validation + clean-tree assertion)
+        run: ./Tests/run-tests.sh
 
-      # Package the app into the runner's build/ dir WITHOUT installing:
-      # the collector files are staged from this checkout's build/ (kept in
-      # git for this purpose); a missing upstream checkout fails validation,
-      # so seed COLLECTOR_SRC from the tracked copies.
-      - name: Package app bundle (no install)
+      # Second packaging pass driven directly by CI: collector files are
+      # seeded from the tracked copies (no upstream checkout on the runner);
+      # build output AND install are redirected outside the repo.
+      - name: Package app bundle (no install, no repo mutation)
         env:
           COLLECTOR_SRC: ${{ github.workspace }}/.ci-collector
+          HERMES_USAGE_BUILD_DIR: ${{ runner.temp }}/pkg
           HERMES_USAGE_INSTALL_DIR: ${{ runner.temp }}/apps
         run: |
           mkdir -p .ci-collector/collector .ci-collector/hermes-usage-export
@@ -36,8 +38,11 @@ jobs:
           # build.sh self-validates: plutil -lint + codesign --deep --strict
           # fail the run on a malformed bundle (R4 rework).
           ./build.sh
-          plutil -lint build/HermesUsage.app/Contents/Info.plist
-          codesign --verify --deep --strict --verbose=2 build/HermesUsage.app
-          test -x build/HermesUsage.app/Contents/MacOS/HermesUsage
+          plutil -lint "$RUNNER_TEMP/pkg/HermesUsage.app/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/pkg/HermesUsage.app"
+          test -x "$RUNNER_TEMP/pkg/HermesUsage.app/Contents/MacOS/HermesUsage"
           test -d "$RUNNER_TEMP/apps/HermesUsage.app" || { echo "redirected install missing"; exit 1; }
-          echo "packaged + validated OK (not installed to ~/Applications)"
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "FAIL: CI run mutated the repository:"; git status --porcelain; exit 1
+          fi
+          echo "packaged + validated OK (repo clean, nothing installed to ~/Applications)"

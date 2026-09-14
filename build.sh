@@ -12,8 +12,12 @@ SRC="${HERMES_USAGE_SRC:-$SCRIPT_DIR}"
 COLLECTOR_SRC="${COLLECTOR_SRC:-$HOME/Development/omarchy-hermes-usage}"
 # Install destination — override to build without touching ~/Applications.
 INSTALL_DIR="${HERMES_USAGE_INSTALL_DIR:-$HOME/Applications}"
+# Build output directory — override to package somewhere other than the
+# repo's tracked build/ (test runner and CI redirect this into a temp dir
+# so the committed artifact is never mutated).
+BUILD_DIR_OUT="${HERMES_USAGE_BUILD_DIR:-$SRC/build}"
 
-APP="$SRC/build/HermesUsage.app"
+APP="$BUILD_DIR_OUT/HermesUsage.app"
 CONTENTS="$APP/Contents"
 BIN="$CONTENTS/MacOS"
 RES="$CONTENTS/Resources"
@@ -25,8 +29,9 @@ fail() { echo "build.sh: $1" >&2; exit 1; }
 # AND this script is not running from the canonical checkout location,
 # require an explicit HERMES_USAGE_INSTALL_DIR redirect. This prevents a
 # test harness or foreign clone from clobbering the user's app.
-if [ "$INSTALL_DIR" = "$HOME/Applications" ] && [ "$SRC" != "$HOME/Development/hermes-usage-menubar" ]; then
-  fail "refusing to install to ~/Applications from non-canonical checkout $SRC — set HERMES_USAGE_INSTALL_DIR"
+CANONICAL="$HOME/Development/hermes-usage-menubar"
+if [ "$INSTALL_DIR" = "$HOME/Applications" ] && [ "$SCRIPT_DIR" != "$CANONICAL" ]; then
+  fail "refusing to install to ~/Applications from non-canonical checkout $SCRIPT_DIR — set HERMES_USAGE_INSTALL_DIR"
 fi
 
 # ---- Validate all inputs BEFORE removing any output (R4) ----
@@ -39,8 +44,10 @@ command -v xcrun >/dev/null 2>&1 || fail "xcrun not found — install Xcode comm
 command -v python3 >/dev/null 2>&1 || fail "python3 not found"
 [ -d "$INSTALL_DIR" ] || mkdir -p "$INSTALL_DIR" || fail "cannot create install dir $INSTALL_DIR"
 
-# Only remove the build output after every input checked out.
-rm -rf "$SRC/build"
+# Only remove the build output after every input checked out. With
+# HERMES_USAGE_BUILD_DIR set this never touches the repository at all.
+mkdir -p "$BUILD_DIR_OUT"
+rm -rf "$APP"
 mkdir -p "$BIN" "$RES/collector" "$RES/hermes-usage-export"
 
 echo "==> Compiling Swift (release)..."
@@ -77,7 +84,12 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 PLIST
 
 echo "==> Building app icon..."
-cd "$SRC"
+# Icon intermediates live inside the build output dir so the repository is
+# never mutated — not even transiently or on a mid-build failure.
+ICON_WORK="$BUILD_DIR_OUT/icon-work"
+mkdir -p "$ICON_WORK"
+cp "$SRC/make_icon.py" "$ICON_WORK/"
+cd "$ICON_WORK"
 python3 make_icon.py
 rm -rf AppIcon.iconset && mkdir AppIcon.iconset
 cp icon_1024.png AppIcon.iconset/icon_512x512@2x.png
@@ -92,7 +104,7 @@ sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_256x256@2x.png >/dev/nu
 sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_512x512.png >/dev/null 2>&1
 iconutil -c icns AppIcon.iconset -o AppIcon.icns
 cp AppIcon.icns "$RES/AppIcon.icns"
-rm -rf AppIcon.iconset icon_1024.png AppIcon.icns
+rm -rf "$ICON_WORK"
 
 echo "==> Ad-hoc codesigning..."
 codesign --force --sign - "$APP"
