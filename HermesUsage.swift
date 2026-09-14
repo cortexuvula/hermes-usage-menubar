@@ -156,6 +156,79 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
     return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
 }
 
+// MARK: - B2: Workload helpers (free functions for testability)
+
+/// B2: Priority for task sorting (lower = appears first).
+/// Collector-generated labels (ordinary, unknown, other) should appear last.
+func taskSortPriority(_ name: String) -> Int {
+    switch name {
+    case "other": return 100
+    case "unknown": return 90
+    case "ordinary": return 80
+    default: return 0
+    }
+}
+
+/// B2: Format task label for display.
+/// Collector-generated labels get neutral treatment; explicit task strings pass through.
+func taskLabel(_ name: String) -> String {
+    switch name {
+    case "ordinary": return "Ordinary"
+    case "unknown": return "Unknown"
+    case "other": return "Other"
+    default: return name
+    }
+}
+
+// MARK: - B3: Accounting evidence helpers (free functions for testability)
+
+/// B3: Format recorded cost with status context.
+/// Shows the value and clarifies it's a database observation, not invoice reconciliation.
+func formatRecordedCost(_ n: Double?) -> String {
+    guard let n = n else { return "Recorded cost unavailable" }
+    return "Recorded \(compactCost(n)); this is a database observation, not invoice reconciliation"
+}
+
+/// B3: Format row-status breakdown for accounting evidence.
+/// Returns a human-readable summary of how many rows have each cost status.
+func formatRowStatusBreakdown(_ statusRows: [String: Int]?) -> String? {
+    guard let rows = statusRows, !rows.isEmpty else { return nil }
+
+    var parts: [String] = []
+    if let estimated = rows["estimated"], estimated > 0 {
+        parts.append("\(estimated) with estimated cost")
+    }
+    if let actual = rows["actual"], actual > 0 {
+        parts.append("\(actual) with actual cost")
+    }
+    if let included = rows["included"], included > 0 {
+        parts.append("\(included) subscription-included")
+    }
+    if let unknown = rows["unknown"], unknown > 0 {
+        parts.append("\(unknown) with unknown cost status")
+    }
+
+    return parts.isEmpty ? nil : parts.joined(separator: ", ")
+}
+
+/// B3: Format call-availability evidence.
+/// Distinguishes between total calls and rows with missing call counts.
+func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
+    let callsText: String
+    if let calls = calls {
+        callsText = "\(calls) reported calls"
+    } else {
+        callsText = "Calls unavailable"
+    }
+
+    guard let unknown = unknownCallRows, unknown > 0 else {
+        return callsText
+    }
+
+    let plural = unknown == 1 ? "row" : "rows"
+    return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
+}
+
 /// Resolve the display cost for a provider row (R3).
 /// When detail data exists: normalize its keys to match providerUsage keys,
 /// then look up. A miss with details present means cost was never observed → nil.
@@ -1111,53 +1184,6 @@ struct ContentView: View {
 
     // MARK: - B3: Accounting evidence helpers
 
-    /// B3: Format recorded cost with status context.
-    /// Shows the value and clarifies it's a database observation, not invoice reconciliation.
-    private func formatRecordedCost(_ n: Double?) -> String {
-        guard let n = n else { return "Recorded cost unavailable" }
-        return "Recorded \(compactCost(n)); this is a database observation, not invoice reconciliation"
-    }
-
-    /// B3: Format row-status breakdown for accounting evidence.
-    /// Returns a human-readable summary of how many rows have each cost status.
-    private func formatRowStatusBreakdown(_ statusRows: [String: Int]?) -> String? {
-        guard let rows = statusRows, !rows.isEmpty else { return nil }
-
-        var parts: [String] = []
-        if let estimated = rows["estimated"], estimated > 0 {
-            parts.append("\(estimated) with estimated cost")
-        }
-        if let actual = rows["actual"], actual > 0 {
-            parts.append("\(actual) with actual cost")
-        }
-        if let included = rows["included"], included > 0 {
-            parts.append("\(included) subscription-included")
-        }
-        if let unknown = rows["unknown"], unknown > 0 {
-            parts.append("\(unknown) with unknown cost status")
-        }
-
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
-    }
-
-    /// B3: Format call-availability evidence.
-    /// Distinguishes between total calls and rows with missing call counts.
-    private func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
-        let callsText: String
-        if let calls = calls {
-            callsText = "\(calls) reported calls"
-        } else {
-            callsText = "Calls unavailable"
-        }
-
-        guard let unknown = unknownCallRows, unknown > 0 else {
-            return callsText
-        }
-
-        let plural = unknown == 1 ? "row" : "rows"
-        return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
-    }
-
     private func totalChip(_ label: String, _ value: String, help: String) -> some View {
         VStack(spacing: 1) {
             Text(value)
@@ -1325,9 +1351,16 @@ struct ContentView: View {
                                     .foregroundStyle(.secondary)
                                     .help("Calls not recorded")
                             }
-                            Text(compactTokens(Double(task.tokens)))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                            if let tokens = task.tokens {
+                                Text(compactTokens(Double(tokens)))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("—")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .help("Tokens not recorded")
+                            }
                             Text(compactCost(task.estimatedUsd))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
@@ -1351,7 +1384,7 @@ struct ContentView: View {
     }
 
     /// B2: Sort tasks by tokens descending, with special ordering for collector-generated labels.
-    private func sortedTasks(_ rec: UsageRecord) -> [(name: String, tokens: Int, calls: Int?, estimatedUsd: Double?)] {
+    private func sortedTasks(_ rec: UsageRecord) -> [(name: String, tokens: Int?, calls: Int?, estimatedUsd: Double?)] {
         guard let tasks = rec.details?.tasks else { return [] }
 
         // Sort by tokens descending, but ensure "other" and "unknown" appear last
@@ -1364,29 +1397,7 @@ struct ContentView: View {
             return (lhs.value.tokens ?? 0) > (rhs.value.tokens ?? 0)
         }
 
-        return sorted.map { (name: $0.key, tokens: $0.value.tokens ?? 0, calls: $0.value.calls, estimatedUsd: $0.value.estimatedUsd) }
-    }
-
-    /// B2: Priority for task sorting (lower = appears first).
-    /// Collector-generated labels (ordinary, unknown, other) should appear last.
-    private func taskSortPriority(_ name: String) -> Int {
-        switch name {
-        case "other": return 100
-        case "unknown": return 90
-        case "ordinary": return 80
-        default: return 0
-        }
-    }
-
-    /// B2: Format task label for display.
-    /// Collector-generated labels get neutral treatment; explicit task strings pass through.
-    private func taskLabel(_ name: String) -> String {
-        switch name {
-        case "ordinary": return "Ordinary"
-        case "unknown": return "Unknown"
-        case "other": return "Other"
-        default: return name
-        }
+        return sorted.map { (name: $0.key, tokens: $0.value.tokens, calls: $0.value.calls, estimatedUsd: $0.value.estimatedUsd) }
     }
 
     private func sortedProviders(_ rec: UsageRecord) -> [(String, ProviderUsage)] {

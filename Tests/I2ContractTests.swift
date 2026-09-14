@@ -670,6 +670,60 @@ struct I2Tests {
             expect(m.record?.todayTotalTokens == 700, "previous valid record retained")
         }
 
+        // B2: taskSortPriority
+        print("B2: taskSortPriority")
+        do {
+            expect(taskSortPriority("other") == 100, "'other' has priority 100")
+            expect(taskSortPriority("unknown") == 90, "'unknown' has priority 90")
+            expect(taskSortPriority("ordinary") == 80, "'ordinary' has priority 80")
+            expect(taskSortPriority("custom-task") == 0, "custom tasks have priority 0")
+            expect(taskSortPriority("another-task") == 0, "custom tasks have priority 0")
+        }
+
+        // B2: taskLabel
+        print("B2: taskLabel")
+        do {
+            expect(taskLabel("ordinary") == "Ordinary", "'ordinary' → 'Ordinary'")
+            expect(taskLabel("unknown") == "Unknown", "'unknown' → 'Unknown'")
+            expect(taskLabel("other") == "Other", "'other' → 'Other'")
+            expect(taskLabel("custom-task") == "custom-task", "custom tasks pass through")
+            expect(taskLabel("medical-consult") == "medical-consult", "custom tasks pass through")
+        }
+
+        // B3: formatRecordedCost
+        print("B3: formatRecordedCost")
+        do {
+            expect(formatRecordedCost(nil) == "Recorded cost unavailable", "nil → 'Recorded cost unavailable'")
+            let cost10 = formatRecordedCost(10.0)
+            expect(cost10.contains("$10.00"), "10.0 → contains '$10.00'")
+            expect(cost10.contains("database observation"), "10.0 → contains 'database observation'")
+            expect(cost10.contains("not invoice reconciliation"), "10.0 → qualifies 'not invoice reconciliation'")
+        }
+
+        // B3: formatRowStatusBreakdown
+        print("B3: formatRowStatusBreakdown")
+        do {
+            expect(formatRowStatusBreakdown(nil) == nil, "nil → nil")
+            expect(formatRowStatusBreakdown([:]) == nil, "empty dict → nil")
+            let mixed = formatRowStatusBreakdown(["estimated": 5, "actual": 3])
+            expect(mixed?.contains("5 with estimated cost") == true, "mixed: contains '5 with estimated cost'")
+            expect(mixed?.contains("3 with actual cost") == true, "mixed: contains '3 with actual cost'")
+            let single = formatRowStatusBreakdown(["estimated": 10])
+            expect(single == "10 with estimated cost", "single status formatted correctly")
+            expect(formatRowStatusBreakdown(["unknown": 0, "estimated": 0]) == nil, "all-zero → nil")
+        }
+
+        // B3: formatCallAvailability
+        print("B3: formatCallAvailability")
+        do {
+            expect(formatCallAvailability(calls: nil, unknownCallRows: nil) == "Calls unavailable", "nil calls → 'Calls unavailable'")
+            expect(formatCallAvailability(calls: 100, unknownCallRows: nil) == "100 reported calls", "100 calls, no unknown → '100 reported calls'")
+            let withUnknown = formatCallAvailability(calls: 50, unknownCallRows: 5)
+            expect(withUnknown == "50 reported calls; call count unavailable for 5 usage rows", "50 calls with 5 unknown rows")
+            let singular = formatCallAvailability(calls: 10, unknownCallRows: 1)
+            expect(singular == "10 reported calls; call count unavailable for 1 usage row", "10 calls with 1 unknown row (singular)")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
