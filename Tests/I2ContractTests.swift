@@ -652,6 +652,24 @@ struct I2Tests {
             expect(m.record?.todayTotalTokens == 600, "previous valid record retained")
         }
 
+        // A6d: wrong id only (correct name, correct schemaVersion) rejected
+        print("A6d: wrong id only rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":700}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"not-hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":700}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "valid load succeeds")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.loadState == .stale("Usage format not recognized"), "wrong id makes model stale")
+            expect(m.record?.todayTotalTokens == 700, "previous valid record retained")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
