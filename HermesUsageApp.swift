@@ -14,7 +14,15 @@ struct HermesUsageApp: App {
                 .onAppear { model.startIfNeeded(); model.refreshIfStale() }
         } label: {
             // R7: explicitly observe displayTick to re-render menu bar label
-            let tick = model.displayTick
+            _ = model.displayTick
+            let dayLabel: String
+            if model.isDayStale, let days = model.record?.activeDays, days >= 2 {
+                dayLabel = "\(days) days old"
+            } else if model.isStale {
+                dayLabel = "yesterday"
+            } else {
+                dayLabel = "today"
+            }
             return AnyView(
             HStack(spacing: 4) {
                 Image(systemName: model.menuBarWarning ? "exclamationmark.triangle.fill" : "chart.bar.fill")
@@ -23,8 +31,7 @@ struct HermesUsageApp: App {
                     .monospacedDigit()
             }
             .help(menuBarHelp)
-            .accessibilityLabel("Hermes usage: \(statusText) tokens today")
-            .onAppear { _ = tick }
+            .accessibilityLabel("Hermes usage: \(statusText) tokens \(dayLabel)")
             )
         }
         .menuBarExtraStyle(.window)

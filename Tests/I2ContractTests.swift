@@ -251,6 +251,48 @@ struct I2Tests {
             expect(mu.totalTokens == 1000, "sum = 1000, got \(mu.totalTokens)")
         }
 
+        // ---- R3 regression: provider cost key-space mismatch ----
+        print("I2/R3: REGRESSION — provider in totals but not in detail providers")
+        do {
+            // This is the bug: provider exists in providerUsage with legacy cost 0.0,
+            // but is NOT in details.providers (key mismatch or absent).
+            // Should return nil (unknown), not 0.0 (would display as "$0.00").
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"openrouter\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{\"other\":{\"tokens\":500,\"estimatedUsd\":0.001}}}}"))
+            let cost = resolveProviderCost(rec: rec, providerName: "openrouter", legacyCost: 0.0)
+            expect(cost == nil, "returns nil (unknown) when provider not in details, not legacy 0.0")
+        }
+
+        print("I2/R3: key-space mismatch — whitespace normalization")
+        do {
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"openrouter\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{\" openrouter \":{\"tokens\":1000,\"estimatedUsd\":0.001}}}}"))
+            let cost = resolveProviderCost(rec: rec, providerName: "openrouter", legacyCost: 0.0)
+            expect(cost == 0.001, "normalizes whitespace and finds detail cost")
+        }
+
+        print("I2/R3: key-space mismatch — truncation normalization")
+        do {
+            let longKey = String(repeating: "a", count: 50)
+            let truncatedKey = String(longKey.prefix(32))
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(truncatedKey)\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{\"\(longKey)\":{\"tokens\":1000,\"estimatedUsd\":0.002}}}}"))
+            let cost = resolveProviderCost(rec: rec, providerName: truncatedKey, legacyCost: 0.0)
+            expect(cost == 0.002, "normalizes truncation and finds detail cost")
+        }
+
+        print("I2/R3: key-space mismatch — empty → local normalization")
+        do {
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"local\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{\"\":{\"tokens\":1000,\"estimatedUsd\":0.003}}}}"))
+            let cost = resolveProviderCost(rec: rec, providerName: "local", legacyCost: 0.0)
+            expect(cost == 0.003, "normalizes empty to local and finds detail cost")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)

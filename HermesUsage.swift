@@ -125,6 +125,34 @@ let relativeAgeFormatter: RelativeDateTimeFormatter = {
     return f
 }()
 
+/// Mirror of the collector's clean_provider() — strips whitespace, truncates
+/// to 32 characters, defaults to 'local'. Used to normalize detail-dictionary
+/// keys so they match the providerUsage keys (R3 key-space mismatch).
+func cleanProvider(_ s: String) -> String {
+    let trimmed = s.trimmingCharacters(in: .whitespaces)
+    let truncated = String(trimmed.prefix(32))
+    return truncated.isEmpty ? "local" : truncated
+}
+
+/// Resolve the display cost for a provider row (R3).
+/// When detail data exists: normalize its keys to match providerUsage keys,
+/// then look up. A miss with details present means cost was never observed → nil.
+/// When detail data is absent entirely: fall back to legacy providerUsage field
+/// (the only source available in old collector payloads).
+func resolveProviderCost(rec: UsageRecord, providerName: String, legacyCost: Double?) -> Double? {
+    guard let providers = rec.details?.providers else {
+        // No detail data at all — legacy field is the only source.
+        return legacyCost
+    }
+    // Normalize detail keys to match providerUsage keys.
+    let normalized: [String: ProviderDetail] = Dictionary(
+        uniqueKeysWithValues: providers.map { (cleanProvider($0.key), $0.value) }
+    )
+    // Detail data exists: a miss means cost was never observed → nil (em-dash).
+    // Do NOT fall back to legacy zero — that would mask an unobserved cost.
+    return normalized[providerName]?.estimatedUsd
+}
+
 // MARK: - Collector runner
 
 struct CollectorError: LocalizedError {
@@ -801,7 +829,7 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Label("Models (\(total)) — all time", systemImage: "cpu")
+            Label("Models (\(total)) — bounded local history", systemImage: "cpu")
                 .font(.subheadline.weight(.semibold))
         }
     }
@@ -820,15 +848,9 @@ struct ContentView: View {
         let rows = sortedProviders(rec)
         let total = rec.providerUsage?.count ?? rows.count
         // Pre-compute costs with proper nil handling (R3).
-        // When detail data exists, preserve its nil (unobserved) → renders "—".
-        // Only fall back to legacy when detail is absent entirely.
+        // Use resolveProviderCost to normalize detail keys and avoid falling back to legacy zero.
         let rowsWithCost = rows.map { providerName, providerUsage in
-            let cost: Double?
-            if let detail = rec.details?.providers?[providerName] {
-                cost = detail.estimatedUsd
-            } else {
-                cost = providerUsage.estimatedCostUsd
-            }
+            let cost = resolveProviderCost(rec: rec, providerName: providerName, legacyCost: providerUsage.estimatedCostUsd)
             return (providerName, providerUsage, cost)
         }
         return DisclosureGroup {
@@ -878,7 +900,7 @@ struct ContentView: View {
                 }
             }
         } label: {
-            Label("Providers (\(total)) — all time", systemImage: "server.rack")
+            Label("Providers (\(total)) — bounded local history", systemImage: "server.rack")
                 .font(.subheadline.weight(.semibold))
         }
     }
