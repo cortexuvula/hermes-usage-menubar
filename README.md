@@ -42,9 +42,10 @@ rm ~/Library/LaunchAgents/ca.andrehugo.hermes-usage.plist
 - The collector (`collector/hermes-usage.py`) is used unmodified; the Linux-only
   pidfd supervision (`launch.py`/`bootstrap.py`) is not needed — the app runs the
   collector directly via `/usr/bin/python3 -B ... --force`.
-- Quota export (`hermes-usage-export`) only appears if you separately install the
-  companion Hermes plugin (`hermes plugins install <repo>#hermes-usage-export`);
-  the app shows `accounts` if those export files exist, otherwise just local stats.
+- Quota export (`hermes-usage-export`) is a separate, optional Hermes plugin
+  (`hermes plugins install <repo>#hermes-usage-export`); the collector includes
+  any exported `accounts` observations in its JSON, but this app's UI does not
+  render them yet — it shows local usage only.
 - Numbers shown are "device" scope: they sum across all profiles' stores on this
   machine (matching the upstream collector's semantics), not per-profile.
 - Daily attribution is estimated from assistant-message activity (same as upstream).

@@ -62,10 +62,18 @@ func compactTokens(_ n: Double) -> String {
     return String(format: "%.0f", n)
 }
 
+/// Cost with a hard distinction between "not observed" and "known zero":
+/// nil → "—", 0 → "$0.00".
 func compactCost(_ n: Double?) -> String {
-    guard let n = n, n > 0 else { return "" }
+    guard let n = n else { return "—" }
+    if n == 0 { return "$0.00" }
     if n < 0.01 { return String(format: "$%.4f", n) }
     return String(format: "$%.2f", n)
+}
+
+/// Exact localized count for hover help / accessibility, e.g. "3,234,511 tokens".
+func exactTokens(_ n: Double) -> String {
+    String(format: "%,.0f tokens", n)
 }
 
 let dayParser: DateFormatter = {
@@ -94,6 +102,8 @@ final class UsageModel: ObservableObject {
     @Published var errorText: String?
     @Published var updatedAt: Date?
     @Published var isLoading = false
+    /// True when the last refresh failed but we still show a previous record.
+    @Published var isStale = false
 
     private var startedOnce = false
 
@@ -137,10 +147,14 @@ final class UsageModel: ObservableObject {
                     if let rec = try? decoder.decode(UsageRecord.self, from: data) {
                         self.record = rec
                         self.updatedAt = Date()
+                        self.isStale = false
+                        self.errorText = nil
                     } else {
+                        self.isStale = (self.record != nil)
                         self.errorText = "Could not parse collector output"
                     }
                 case .failure(let err):
+                    self.isStale = (self.record != nil)
                     self.errorText = err.localizedDescription
                 }
             }
@@ -184,18 +198,20 @@ struct WeekBars: View {
             ForEach(Array(days.enumerated()), id: \.offset) { idx, day in
                 VStack(spacing: 3) {
                     Text(compactTokens(Double(day.messageCount)))
-                        .font(.system(size: 8, weight: .medium))
+                        .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(idx == days.count - 1 ? Color.accentColor : Color.secondary.opacity(0.45))
-                        .frame(height: max(4, 44 * Double(day.messageCount) / maxTokens))
+                        .frame(height: max(day.messageCount > 0 ? 3 : 0, 44 * Double(day.messageCount) / maxTokens))
                     Text(weekdayLabel(day.date))
-                        .font(.system(size: 9, weight: idx == days.count - 1 ? .bold : .regular))
+                        .font(.caption2.weight(idx == days.count - 1 ? .bold : .regular))
                         .foregroundStyle(idx == days.count - 1 ? Color.primary : Color.secondary)
                 }
                 .frame(maxWidth: .infinity)
+                .help(barHelp(day))
+                .accessibilityLabel(barHelp(day))
             }
         }
     }
@@ -203,6 +219,10 @@ struct WeekBars: View {
     private func weekdayLabel(_ dateStr: String) -> String {
         guard let d = dayParser.date(from: dateStr) else { return "" }
         return weekdayFormatter.string(from: d)
+    }
+
+    private func barHelp(_ day: RecentDay) -> String {
+        "\(day.date) · \(exactTokens(Double(day.messageCount)))"
     }
 }
 
@@ -212,57 +232,95 @@ struct ContentView: View {
     @EnvironmentObject var model: UsageModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             header
             if let err = model.errorText {
-                Text("⚠️ \(err)")
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                errorBanner(err)
             }
-            if let rec = model.record {
-                if rec.hasLocalStats == false {
-                    Text("No local Hermes usage found.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } else {
-                    todaySection(rec)
-                    weekSection(rec)
-                    modelsSection(rec)
-                    totalsSection(rec)
-                    providersSection(rec)
+            Divider()
+                .padding(.horizontal, 14)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let rec = model.record {
+                        if rec.hasLocalStats == false {
+                            emptySection
+                        } else {
+                            todaySection(rec)
+                            weekSection(rec)
+                            totalsSection(rec)
+                            modelsSection(rec)
+                            providersSection(rec)
+                        }
+                    } else if model.errorText == nil {
+                        ProgressView("Loading usage…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
                 }
-            } else if model.errorText == nil {
-                ProgressView("Loading usage…")
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                .padding(14)
             }
+            .frame(height: 430)
+            Divider()
+                .padding(.horizontal, 14)
             footer
         }
-        .padding(14)
         .frame(width: 340)
     }
 
     private var header: some View {
-        HStack {
-            Image(systemName: "gauge.with.dots.needle.50percent")
-                .foregroundStyle(Color.accentColor)
-            Text("Hermes Agent Usage")
-                .font(.headline)
-            Spacer()
-            if model.isLoading {
-                ProgressView().controlSize(.small)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Image(systemName: "gauge.with.dots.needle.50percent")
+                    .foregroundStyle(Color.accentColor)
+                Text("Hermes Agent Usage")
+                    .font(.headline)
+                Spacer()
+                if model.isLoading {
+                    ProgressView().controlSize(.small)
+                }
             }
+            Text("This Mac · All profiles")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+    }
+
+    private func errorBanner(_ err: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("Update failed: \(err)")
+                .font(.caption)
+                .lineLimit(2)
+            Spacer()
+            Button("Retry") { model.refresh() }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var emptySection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("No local Hermes usage found", systemImage: "questionmark.circle")
+                .font(.callout.weight(.semibold))
+            Text("Run a Hermes session on this Mac, then hit Refresh. The collector checks ~/.hermes/state.db and ~/.hermes/profiles/*/state.db.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
     }
 
     private func todaySection(_ rec: UsageRecord) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label("Today", systemImage: "sun.max")
+            Label("Today — estimated tokens", systemImage: "sun.max")
                 .font(.subheadline.weight(.semibold))
             HStack(spacing: 14) {
                 statCell(label: "Tokens", value: compactTokens(Double(rec.todayTotalTokens ?? 0)))
-                statCell(label: "Prompts", value: "\(rec.todayPrompts ?? 0)")
-                statCell(label: "Sessions", value: "\(rec.todaySessions ?? 0)")
+                statCell(label: "Prompts", value: rec.todayPrompts.map(String.init) ?? "—")
+                statCell(label: "Sessions", value: rec.todaySessions.map(String.init) ?? "—")
             }
         }
     }
@@ -283,7 +341,7 @@ struct ContentView: View {
 
     private func weekSection(_ rec: UsageRecord) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Last 7 days", systemImage: "calendar")
+            Label("Last 7 days — estimated tokens", systemImage: "calendar")
                 .font(.subheadline.weight(.semibold))
             if let days = rec.recentDays, !days.isEmpty {
                 WeekBars(days: days)
@@ -295,45 +353,18 @@ struct ContentView: View {
         }
     }
 
-    private func modelsSection(_ rec: UsageRecord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Models", systemImage: "cpu")
-                .font(.subheadline.weight(.semibold))
-            let rows = sortedModels(rec)
-            if rows.isEmpty {
-                Text("No model data")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack {
-                        Text(shortName(row.0))
-                            .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Text(compactTokens(Double(row.1)))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
-    private func sortedModels(_ rec: UsageRecord) -> [(String, Int)] {
-        guard let m = rec.modelUsage else { return [] }
-        return m.map { ($0.key, $0.value.totalTokens) }
-            .sorted { $0.1 > $1.1 }
-            .prefix(8)
-            .map { $0 }
-    }
-
     private func totalsSection(_ rec: UsageRecord) -> some View {
-        HStack(spacing: 10) {
-            totalChip("All-time", compactTokens(Double(rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0)))
-            totalChip("Calls", "\(rec.details?.totals?.calls ?? 0)")
-            totalChip("Est. cost", compactCost(rec.details?.totals?.estimatedUsd).isEmpty ? "$0" : compactCost(rec.details?.totals?.estimatedUsd))
+        VStack(alignment: .leading, spacing: 6) {
+            Label("All-time", systemImage: "clock")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 10) {
+                totalChip("Tokens", compactTokens(Double(rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0)))
+                totalChip("Calls", rec.details?.totals?.calls.map(String.init) ?? "—")
+                totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd))
+            }
+            Text("Estimated, not necessarily billed charges.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -351,11 +382,49 @@ struct ContentView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
     }
 
-    private func providersSection(_ rec: UsageRecord) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Providers", systemImage: "server.rack")
+    private func modelsSection(_ rec: UsageRecord) -> some View {
+        let rows = sortedModels(rec)
+        let total = rec.modelUsage?.count ?? rows.count
+        return DisclosureGroup {
+            if rows.isEmpty {
+                Text("No model data")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack {
+                        Text(shortName(row.0))
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(row.0)
+                        Spacer()
+                        Text(compactTokens(Double(row.1)))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .help(exactTokens(Double(row.1)))
+                    }
+                    .padding(.vertical, 1)
+                }
+            }
+        } label: {
+            Label("Models (\(total)) — all time", systemImage: "cpu")
                 .font(.subheadline.weight(.semibold))
-            let rows = sortedProviders(rec)
+        }
+    }
+
+    private func sortedModels(_ rec: UsageRecord) -> [(String, Int)] {
+        guard let m = rec.modelUsage else { return [] }
+        return m.map { ($0.key, $0.value.totalTokens) }
+            .sorted { $0.1 > $1.1 }
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private func providersSection(_ rec: UsageRecord) -> some View {
+        let rows = sortedProviders(rec)
+        let total = rec.providerUsage?.count ?? rows.count
+        return DisclosureGroup {
             if rows.isEmpty {
                 Text("No provider data")
                     .font(.caption)
@@ -365,18 +434,26 @@ struct ContentView: View {
                     HStack {
                         Text(providerLabel(row.0))
                             .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(row.0)
                         Spacer()
-                        if let cost = row.1.estimatedCostUsd, cost > 0 {
-                            Text(compactCost(cost))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(compactCost(row.1.estimatedCostUsd))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 48, alignment: .trailing)
+                            .help(exactTokens(Double(row.1.tokens ?? 0)))
                         Text(compactTokens(Double(row.1.tokens ?? 0)))
                             .font(.caption.monospacedDigit())
                             .frame(minWidth: 44, alignment: .trailing)
+                            .help(exactTokens(Double(row.1.tokens ?? 0)))
                     }
+                    .padding(.vertical, 1)
                 }
             }
+        } label: {
+            Label("Providers (\(total)) — all time", systemImage: "server.rack")
+                .font(.subheadline.weight(.semibold))
         }
     }
 
@@ -412,9 +489,15 @@ struct ContentView: View {
     private var footer: some View {
         HStack {
             if let t = model.updatedAt {
-                Text("Updated \(t.formatted(date: .omitted, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                if model.isStale {
+                    Text("Last successful update \(t.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Updated \(t.formatted(date: .omitted, time: .shortened)) · auto 15 min")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             } else {
                 Text("—")
                     .font(.caption2)
@@ -423,9 +506,11 @@ struct ContentView: View {
             Spacer()
             Button("Refresh") { model.refresh() }
                 .controlSize(.small)
+                .disabled(model.isLoading)
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .controlSize(.small)
         }
+        .padding(14)
     }
 }
 
@@ -454,7 +539,7 @@ struct HermesUsageApp: App {
                 .onAppear { model.startIfNeeded() }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "gauge.with.dots.needle.50percent")
+                Image(systemName: model.isStale ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.50percent")
                 Text(statusText)
                     .font(.system(.body, design: .rounded, weight: .medium))
                     .monospacedDigit()
@@ -465,6 +550,9 @@ struct HermesUsageApp: App {
     }
 
     private var statusText: String {
+        if model.isStale, let rec = model.record, let t = rec.todayTotalTokens {
+            return "⚠︎ " + compactTokens(Double(t))
+        }
         if let rec = model.record, let t = rec.todayTotalTokens {
             return compactTokens(Double(t))
         }
