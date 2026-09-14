@@ -956,6 +956,25 @@ struct ContentView: View {
                          value: rec.todaySessions.map(String.init) ?? "—",
                          help: rec.todaySessions.map { "\($0) sessions" })
             }
+            if let byModel = rec.todayTokensByModel, !byModel.isEmpty {
+                DisclosureGroup("By model") {
+                    let sorted = byModel.sorted { $0.value > $1.value }
+                    ForEach(Array(sorted.enumerated()), id: \.offset) { _, entry in
+                        HStack {
+                            Text(entry.key)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Text(compactTokens(Double(entry.value)))
+                                .font(.caption.monospacedDigit())
+                                .frame(width: 52, alignment: .trailing)
+                        }
+                    }
+                }
+                .font(.caption.weight(.medium))
+                .padding(.top, 2)
+            }
         }
     }
 
