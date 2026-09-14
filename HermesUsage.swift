@@ -162,7 +162,9 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
 /// even when the aggregate is known).
 func hasNilProviderCost(_ rec: UsageRecord) -> Bool {
     guard let providerUsage = rec.providerUsage else { return false }
-    return providerUsage.values.contains { $0.estimatedCostUsd == nil }
+    return providerUsage.keys.contains { name in
+        resolveProviderCost(rec: rec, providerName: name, legacyCost: providerUsage[name]?.estimatedCostUsd) == nil
+    }
 }
 
 // MARK: - B2: Workload helpers (free functions for testability)

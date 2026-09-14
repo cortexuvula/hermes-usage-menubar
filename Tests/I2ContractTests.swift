@@ -782,6 +782,16 @@ struct I2Tests {
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
                 "\"providerUsage\":{\"p1\":{\"tokens\":100},\"p2\":{\"tokens\":50}}}"))
             expect(hasNilProviderCost(allNil), "all providers nil cost → true (F5)")
+
+            // F5 regression: nil detail with non-nil legacy zero. This is the exact
+            // @ui-consultant reproducer — legacy says $0.00, detail says unobserved.
+            // resolveProviderCost must return nil; hasNilProviderCost must fire.
+            let nilDetailNonNilLegacy = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":1.46},\"providers\":{\"anthropic\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":100,\"estimatedCostUsd\":0.0}}}"))
+            expect(hasNilProviderCost(nilDetailNonNilLegacy), "nil detail + non-nil legacy zero → true (F5 regression)")
+            expect(resolveProviderCost(rec: nilDetailNonNilLegacy, providerName: "anthropic", legacyCost: 0.0) == nil, "resolveProviderCost returns nil for nil detail (F5)")
         }
 
         print("")
