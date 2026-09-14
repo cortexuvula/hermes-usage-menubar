@@ -48,21 +48,20 @@ PLIST
 echo "==> Building app icon..."
 cd "$SRC"
 python3 make_icon.py
-rm -rf .iconset && mkdir .iconset
-cp icon_1024.png .iconset/icon_512x512@2x.png
-sips -z 16 16 icon_1024.png --out .iconset/icon_16x16.png >/dev/null 2>&1
-sips -z 32 32 icon_1024.png --out .iconset/icon_16x16@2x.png >/dev/null 2>&1
-sips -z 32 32 icon_1024.png --out .iconset/icon_32x32.png >/dev/null 2>&1
-sips -z 64 64 icon_1024.png --out .iconset/icon_32x32@2x.png >/dev/null 2>&1
-sips -z 64 64 icon_1024.png --out .iconset/icon_64x64.png >/dev/null 2>&1
-sips -z 128 128 icon_1024.png --out .iconset/icon_128x128.png >/dev/null 2>&1
-sips -z 256 256 icon_1024.png --out .iconset/icon_128x128@2x.png >/dev/null 2>&1
-sips -z 256 256 icon_1024.png --out .iconset/icon_256x256.png >/dev/null 2>&1
-sips -z 512 512 icon_1024.png --out .iconset/icon_256x256@2x.png >/dev/null 2>&1
-sips -z 512 512 icon_1024.png --out .iconset/icon_512x512.png >/dev/null 2>&1
-iconutil -c icns .iconset -o AppIcon.icns
+rm -rf AppIcon.iconset && mkdir AppIcon.iconset
+cp icon_1024.png AppIcon.iconset/icon_512x512@2x.png
+sips -z 16 16 icon_1024.png --out AppIcon.iconset/icon_16x16.png >/dev/null 2>&1
+sips -z 32 32 icon_1024.png --out AppIcon.iconset/icon_16x16@2x.png >/dev/null 2>&1
+sips -z 32 32 icon_1024.png --out AppIcon.iconset/icon_32x32.png >/dev/null 2>&1
+sips -z 64 64 icon_1024.png --out AppIcon.iconset/icon_32x32@2x.png >/dev/null 2>&1
+sips -z 128 128 icon_1024.png --out AppIcon.iconset/icon_128x128.png >/dev/null 2>&1
+sips -z 256 256 icon_1024.png --out AppIcon.iconset/icon_128x128@2x.png >/dev/null 2>&1
+sips -z 256 256 icon_1024.png --out AppIcon.iconset/icon_256x256.png >/dev/null 2>&1
+sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_256x256@2x.png >/dev/null 2>&1
+sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_512x512.png >/dev/null 2>&1
+iconutil -c icns AppIcon.iconset -o AppIcon.icns
 cp AppIcon.icns "$RES/AppIcon.icns"
-rm -rf .iconset icon_1024.png AppIcon.icns
+rm -rf AppIcon.iconset icon_1024.png AppIcon.icns
 
 echo "==> Ad-hoc codesigning..."
 codesign --force --sign - "$APP"

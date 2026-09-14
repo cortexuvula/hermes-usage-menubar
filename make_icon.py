@@ -2,6 +2,7 @@
 """Clean macOS app icon: centered gauge + baseline spark bars, no overlap."""
 from PIL import Image, ImageDraw
 import math
+from pathlib import Path
 
 SIZE = 1024
 RADIUS = 230
@@ -61,5 +62,5 @@ for i, h in enumerate([0.45, 0.65, 0.5, 0.9]):
     d.rounded_rectangle([bx, by - bh, bx + bw, by], radius=16, fill=col)
     bx += bw + 26
 
-img.save("/tmp/hermes-icon/icon_1024.png")
+img.save(Path(__file__).resolve().parent / "icon_1024.png")
 print("rendered")
