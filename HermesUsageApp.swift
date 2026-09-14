@@ -54,11 +54,7 @@ struct MenuBarLabelView: View {
     /// (count of distinct activity days in history, not record age) or stale/
     /// refresh flags (a failed refresh does not age the data).
     private var dayLabel: String {
-        if let t = model.updatedAt {
-            let days = Calendar.current.dateComponents([.day], from: t, to: Date()).day ?? 0
-            return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
-        }
-        return "age unknown"
+        dayAgeLabel(updatedAt: model.updatedAt)
     }
 
     private var statusText: String {

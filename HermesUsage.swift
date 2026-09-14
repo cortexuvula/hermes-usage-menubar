@@ -134,6 +134,20 @@ func cleanProvider(_ s: String) -> String {
     return truncated.isEmpty ? "local" : truncated
 }
 
+/// Compute the day-age label for a record timestamp.
+/// Returns "today", "yesterday", "N days old", or "age unknown".
+/// Uses startOfDay normalization to count calendar days, not elapsed 24-hour periods.
+func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
+    guard let t = updatedAt else {
+        return "age unknown"
+    }
+    let cal = Calendar.current
+    let startT = cal.startOfDay(for: t)
+    let startNow = cal.startOfDay(for: now)
+    let days = cal.dateComponents([.day], from: startT, to: startNow).day ?? 0
+    return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
+}
+
 /// Resolve the display cost for a provider row (R3).
 /// When detail data exists: normalize its keys to match providerUsage keys,
 /// then look up. A miss with details present means cost was never observed → nil.
@@ -997,8 +1011,11 @@ struct ContentView: View {
             return "Last successful update \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
         }
         if model.isDayStale {
-            // R7: calculate actual days since update, not just "yesterday"
-            let days = Calendar.current.dateComponents([.day], from: t, to: Date()).day ?? 1
+            // R7: calculate actual days since update using calendar days (not 24-hour periods)
+            let cal = Calendar.current
+            let startT = cal.startOfDay(for: t)
+            let startNow = cal.startOfDay(for: Date())
+            let days = cal.dateComponents([.day], from: startT, to: startNow).day ?? 1
             let dayLabel = days == 1 ? "Yesterday's" : "\(days) days old"
             return "\(dayLabel) data · \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
         }

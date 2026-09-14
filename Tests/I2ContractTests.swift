@@ -328,26 +328,19 @@ struct I2Tests {
             let cost = resolveProviderCost(rec: rec, providerName: "deepseek", legacyCost: 0.0)
             expect(cost == nil, "duplicate keys with disagreeing costs → nil (conservative)")
         }
-
+        
         print("")
         // ---- Accessibility label: day age derivation ----
         print("I2: accessibility label — day age from updatedAt")
         do {
-            // Mirror the dayLabel computation from MenuBarLabelView
-            func dayLabel(from t: Date) -> String {
-                let days = Calendar.current.dateComponents([.day], from: t, to: Date()).day ?? 0
-                return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
-            }
-            func dayLabelNoRecord() -> String {
-                return "age unknown"
-            }
-            
+            // Test the actual dayAgeLabel function, not a re-implementation
+            let cal = Calendar.current
             let now = Date()
-            let label0 = dayLabel(from: now)
-            let label1 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -1, to: now)!)
-            let label2 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -2, to: now)!)
-            let label5 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -5, to: now)!)
-            let labelNone = dayLabelNoRecord()
+            let label0 = dayAgeLabel(updatedAt: now)
+            let label1 = dayAgeLabel(updatedAt: cal.date(byAdding: .day, value: -1, to: now)!)
+            let label2 = dayAgeLabel(updatedAt: cal.date(byAdding: .day, value: -2, to: now)!)
+            let label5 = dayAgeLabel(updatedAt: cal.date(byAdding: .day, value: -5, to: now)!)
+            let labelNone = dayAgeLabel(updatedAt: nil)
             
             // Basic correctness
             expect(label0 == "today", "0 days → today")
@@ -363,6 +356,32 @@ struct I2Tests {
             expect(!label5.contains("yesterday"), "5-day-old label must not contain 'yesterday'")
             expect(!labelNone.contains("today"), "missing record label must not contain 'today'")
             expect(!labelNone.contains("yesterday"), "missing record label must not contain 'yesterday'")
+        }
+        
+        print("")
+        // ---- Midnight boundary regression test ----
+        print("I2: midnight boundary — record at 23:59, check at 00:01")
+        do {
+            // Create a fixed "now" at 2026-09-14 00:01
+            let cal = Calendar.current
+            var components = DateComponents()
+            components.year = 2026
+            components.month = 9
+            components.day = 14
+            components.hour = 0
+            components.minute = 1
+            let now = cal.date(from: components)!
+            
+            // Record timestamp: 2026-09-13 23:59 (2 minutes ago, but different calendar day)
+            components.day = 13
+            components.hour = 23
+            components.minute = 59
+            let recordTime = cal.date(from: components)!
+            
+            let label = dayAgeLabel(updatedAt: recordTime, now: now)
+            
+            // Must say "yesterday" (calendar day boundary), not "today" (elapsed time)
+            expect(label == "yesterday", "midnight boundary: 23:59 record at 00:01 → yesterday, got \(label)")
         }
 
         print("")
