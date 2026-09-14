@@ -21,10 +21,21 @@ panel with a SwiftUI menu bar app.
 ./build.sh
 ```
 
-Requires Xcode command-line tools (`swiftc`), Python 3 with Pillow (for the icon),
-and the upstream collector checkout at `~/Development/omarchy-hermes-usage`
-(pointed to by `COLLECTOR_SRC` in `build.sh`). Output installs to
-`~/Applications/HermesUsage.app`.
+Builds from the checkout the script lives in (no hard-coded paths). Requires
+Xcode command-line tools (`swiftc`), Python 3 with Pillow (for the icon), and
+the upstream collector checkout. The current target is **arm64 (Apple
+Silicon) only**.
+
+Configuration (environment variables):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COLLECTOR_SRC` | `~/Development/omarchy-hermes-usage` | Upstream collector checkout |
+| `HERMES_USAGE_INSTALL_DIR` | `~/Applications` | Install destination (redirect for CI/testing) |
+| `HERMES_USAGE_SRC` | script's directory | Source root (rarely needed) |
+
+All inputs are validated before any previous build output is removed.
+Output installs to `~/Applications/HermesUsage.app` by default.
 
 ## Start at login
 
@@ -51,3 +62,15 @@ rm ~/Library/LaunchAgents/ca.andrehugo.hermes-usage.plist
 - Daily attribution is estimated from assistant-message activity (same as upstream).
 
 MIT — see LICENSE (upstream) and HermesUsage.swift.
+
+## Known collector caveat (unmodified upstream behavior)
+
+The bundled collector is kept byte-identical to upstream
+(`omarchy-hermes-usage`). Its SQLite fallback path (`hermes-usage.py`
+`connect()`) is not strictly read-only at the filesystem level: if a store
+file disappears between discovery and connection, the plain
+`sqlite3.connect()` fallback creates a 0-byte database at that path before
+`PRAGMA query_only` engages. The window is milliseconds, the effect is an
+empty file inside the user's own `~/.hermes`, and no data is read or
+written beyond that. A fail-closed open belongs upstream; this repo tracks
+upstream for the collector rather than diverging.

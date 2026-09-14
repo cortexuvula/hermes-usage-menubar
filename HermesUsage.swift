@@ -649,7 +649,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("~/.hermes/state.db")
                     Text("~/.hermes/profiles/*/state.db")
-                    Text("Scope: this device, all profiles · read-only")
+                    Text("Scope: this device, all profiles · reads local databases; a rare fallback path may create an empty file if a store vanishes mid-scan")
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)
