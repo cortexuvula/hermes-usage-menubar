@@ -153,12 +153,20 @@ final class UsageModel: ObservableObject {
     @Published var loadState: LoadState = .initial
     /// True when the last refresh failed but we still show a previous record.
     @Published var isStale = false
+    /// R7: lightweight display clock for time-dependent UI (day-rollover,
+    /// relative-age). Bumped every 60s and on wake; does NOT trigger
+    /// collection. Views observing this re-render on clock boundaries.
+    @Published var displayTick = 0
 
     private var startedOnce = false
 
     init() {
         // Kick off collection immediately at launch, not on first popover open.
         startIfNeeded()
+        // R7: start lightweight display clock (60s interval, no collection).
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.displayTick += 1 }
+        }
     }
 
     func startIfNeeded() {
@@ -674,6 +682,9 @@ struct ContentView: View {
     }
 
     private var footer: some View {
+        // R7: explicitly observe displayTick to re-render time-dependent UI
+        let tick = model.displayTick
+        return AnyView(
         HStack {
             if let t = model.updatedAt {
                 Text(footerAgeText(t))
@@ -703,14 +714,21 @@ struct ContentView: View {
             .help("More (⌘Q quits)")
         }
         .padding(14)
+        .onAppear { _ = tick }  // R7: bind observation
+        )
     }
 
     private func footerAgeText(_ t: Date) -> String {
+        // R7: reference displayTick so this re-renders on clock boundaries
+        _ = model.displayTick
         if model.isStale {
             return "Last successful update \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
         }
         if model.isDayStale {
-            return "Yesterday's data · \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
+            // R7: calculate actual days since update, not just "yesterday"
+            let days = Calendar.current.dateComponents([.day], from: t, to: Date()).day ?? 1
+            let dayLabel = days == 1 ? "Yesterday's" : "\(days) days old"
+            return "\(dayLabel) data · \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
         }
         return "Updated \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date())) · auto 15 min"
     }
@@ -740,6 +758,9 @@ struct HermesUsageApp: App {
                 .environmentObject(model)
                 .onAppear { model.startIfNeeded(); model.refreshIfStale() }
         } label: {
+            // R7: explicitly observe displayTick to re-render menu bar label
+            let tick = model.displayTick
+            return AnyView(
             HStack(spacing: 4) {
                 Image(systemName: model.menuBarWarning ? "exclamationmark.triangle.fill" : "chart.bar.fill")
                 Text(statusText)
@@ -748,6 +769,8 @@ struct HermesUsageApp: App {
             }
             .help(menuBarHelp)
             .accessibilityLabel("Hermes usage: \(statusText) tokens today")
+            .onAppear { _ = tick }
+            )
         }
         .menuBarExtraStyle(.window)
     }
