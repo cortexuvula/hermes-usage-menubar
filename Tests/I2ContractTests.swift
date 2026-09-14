@@ -792,6 +792,15 @@ struct I2Tests {
                 "\"providerUsage\":{\"anthropic\":{\"tokens\":100,\"estimatedCostUsd\":0.0}}}"))
             expect(hasNilProviderCost(nilDetailNonNilLegacy), "nil detail + non-nil legacy zero → true (F5 regression)")
             expect(resolveProviderCost(rec: nilDetailNonNilLegacy, providerName: "anthropic", legacyCost: 0.0) == nil, "resolveProviderCost returns nil for nil detail (F5)")
+
+            // F5 invariant: displayed unavailable cost implies legend, EVEN when aggregate is known
+            // Real-world fixture: Anthropic row shows "—" (nil detail), OpenRouter shows "$0.00" (known zero),
+            // aggregate is $1.46 (known). Legend "— Cost unavailable; not zero" MUST still appear.
+            let realWorldMixed = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":1.46},\"providers\":{\"anthropic\":{\"estimatedUsd\":null},\"openrouter\":{\"estimatedUsd\":0.0}}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":100,\"estimatedCostUsd\":0.0},\"openrouter\":{\"tokens\":200,\"estimatedCostUsd\":0.0}}}"))
+            expect(hasNilProviderCost(realWorldMixed), "F5 invariant: any nil provider detail → legend shown (aggregate known, legacy zero)")
         }
 
         // F3: formatWorkloadAccessibilitySummary names unavailable values explicitly
