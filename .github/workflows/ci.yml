@@ -38,13 +38,16 @@ jobs:
       # build output AND install are redirected outside the repo.
       - name: Package app bundle (no install, no repo mutation)
         env:
-          COLLECTOR_SRC: ${{ github.workspace }}/.ci-collector
+          COLLECTOR_SRC: ${{ runner.temp }}/.ci-collector
           HERMES_USAGE_BUILD_DIR: ${{ runner.temp }}/pkg
           HERMES_USAGE_INSTALL_DIR: ${{ runner.temp }}/apps
         run: |
-          mkdir -p .ci-collector/collector .ci-collector/hermes-usage-export
-          cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py .ci-collector/collector/
-          cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py .ci-collector/hermes-usage-export/
+          # Stage the collector copies OUTSIDE the workspace so the
+          # clean-tree assertion below only guards genuine mutations
+          # (the first run tripped it on its own untracked staging dir).
+          mkdir -p "$RUNNER_TEMP/.ci-collector/collector" "$RUNNER_TEMP/.ci-collector/hermes-usage-export"
+          cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py "$RUNNER_TEMP/.ci-collector/collector/"
+          cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py "$RUNNER_TEMP/.ci-collector/hermes-usage-export/"
           # build.sh self-validates: plutil -lint + codesign --deep --strict
           # fail the run on a malformed bundle (R4 rework).
           ./build.sh
