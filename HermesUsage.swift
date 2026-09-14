@@ -1037,11 +1037,16 @@ struct ContentView: View {
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+            if rec.details?.totals?.estimatedUsd == nil {
+                Text("— Cost unavailable; not zero")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
     private func costHelp(_ n: Double?) -> String {
-        guard let n = n else { return "Cost not observed" }
+        guard let n = n else { return "Cost unavailable; not zero — no estimate reported" }
         return "Recorded estimate: \(compactCost(n)); costs may be unreported by some providers"
     }
 
