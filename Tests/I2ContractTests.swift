@@ -599,7 +599,8 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":400}")), elapsed: 0.05),
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"other-agent\",\"name\":\"Other Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}")), elapsed: 0.05)
+                    // Fixture differs ONLY in id/name — keeps todayTotalTokens to isolate identity rejection
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"other-agent\",\"name\":\"Other Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":400}")), elapsed: 0.05)
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -613,6 +614,42 @@ struct I2Tests {
             // Second load with wrong producer is rejected
             expect(m.loadState == .stale("Usage format not recognized"), "wrong producer makes model stale")
             expect(m.record?.todayTotalTokens == 400, "previous valid record retained (400 tokens)")
+        }
+
+        // A6b: wrong name only (correct id, correct schemaVersion) rejected
+        print("A6b: wrong name only rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":500}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Not Hermes\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":500}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "valid load succeeds")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.loadState == .stale("Usage format not recognized"), "wrong name makes model stale")
+            expect(m.record?.todayTotalTokens == 500, "previous valid record retained")
+        }
+
+        // A6c: wrong schemaVersion (correct id, correct name) rejected
+        print("A6c: wrong schemaVersion rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":600}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":99,\"hasLocalStats\":true,\"todayTotalTokens\":600}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "valid load succeeds")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.loadState == .stale("Usage format not recognized"), "unsupported schemaVersion makes model stale")
+            expect(m.record?.todayTotalTokens == 600, "previous valid record retained")
         }
 
         print("")
