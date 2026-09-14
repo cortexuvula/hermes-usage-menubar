@@ -41,11 +41,13 @@ struct ProviderUsage: Codable {
 
 struct Details: Codable {
     let totals: Totals?
+    let truncated: Bool?
 }
 
 struct Totals: Codable {
     let rows: Int?
     let calls: Int?
+    let unknownCallRows: Int?
     let tokens: Int?
     let reasoning: Int?
     let cacheRead: Int?
@@ -440,6 +442,17 @@ struct ContentView: View {
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
             }
+            // R2: surface incomplete collection and call coverage
+            if let details = rec.details, details.truncated == true {
+                Text("⚠️ Partial collection — some data was truncated")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            if let unknownCalls = rec.details?.totals?.unknownCallRows, unknownCalls > 0 {
+                Text("⚠️ \(unknownCalls) call row\(unknownCalls == 1 ? "" : "s") with missing data")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -499,6 +512,13 @@ struct ContentView: View {
                     .foregroundStyle(Color.accentColor)
                     .padding(.top, 2)
                 }
+                // R2: surface incomplete collection
+                if let details = rec.details, details.truncated == true {
+                    Text("⚠️ Partial collection")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.top, 2)
+                }
             }
         } label: {
             Label("Models (\(total)) — all time", systemImage: "cpu")
@@ -555,6 +575,13 @@ struct ContentView: View {
                             .help(exactTokens(Double(row.1.tokens ?? 0)))
                     }
                     .padding(.vertical, 1)
+                }
+                // R2: surface incomplete collection
+                if let details = rec.details, details.truncated == true {
+                    Text("⚠️ Partial collection")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.top, 2)
                 }
             }
         } label: {
