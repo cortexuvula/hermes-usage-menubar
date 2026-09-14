@@ -2,7 +2,7 @@
 # Build Hermes Usage menu bar app for macOS
 set -euo pipefail
 
-SRC="/Users/cortexuvula/Development/mac-hermes-usage"
+SRC="/Users/cortexuvula/Development/hermes-usage-menubar"
 COLLECTOR_SRC="/Users/cortexuvula/Development/omarchy-hermes-usage"
 APP="$SRC/build/HermesUsage.app"
 CONTENTS="$APP/Contents"
