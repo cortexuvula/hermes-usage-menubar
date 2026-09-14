@@ -44,7 +44,7 @@ struct I2Tests {
         print("I2: decode — happy path record")
         do {
             let json = """
-            {"id":"hermes","name":"Hermes Agent","hasLocalStats":true,
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,
              "todayPrompts":5,"todaySessions":2,"todayTotalTokens":1234,
              "recentDays":[{"date":"2026-09-13","messageCount":100}],
              "modelUsage":{"m":{"inputTokens":1,"outputTokens":2}},
@@ -61,10 +61,10 @@ struct I2Tests {
         do {
             // hasLocalStats present=false, totals.calls absent vs 0.
             let a = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false}"))
             expect(a.hasLocalStats == false, "explicit false decodes as false")
             let b = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"details\":{\"totals\":{\"calls\":0,\"estimatedUsd\":null}}}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"details\":{\"totals\":{\"calls\":0,\"estimatedUsd\":null}}}"))
             expect(b.details?.totals?.calls == 0, "observed zero stays zero")
             expect(b.details?.totals?.estimatedUsd == nil, "null cost stays nil (unobserved)")
         }
@@ -84,7 +84,7 @@ struct I2Tests {
         print("I2: decode — unknown extra keys tolerated")
         do {
             let ok = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"futureField\":{\"x\":1}}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"futureField\":{\"x\":1}}"))
             expect(ok?.hasLocalStats == true, "forward-compatible decode")
         }
 
@@ -93,7 +93,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":42}")), elapsed: 0.1)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":42}")), elapsed: 0.1)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             let done = await drainModel(m)
@@ -107,7 +107,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false}")), elapsed: 0.05)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false}")), elapsed: 0.05)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             _ = await drainModel(m)
@@ -130,7 +130,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":7}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":7}")), elapsed: 0.05),
                     CollectorOutcome(kind: .failure("Collector timed out"), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -150,7 +150,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}")), elapsed: 0.05),
                     CollectorOutcome(kind: .success(jsonData("{\"truncated garbage")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -166,7 +166,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"details\":{\"truncated\":true,\"totals\":{\"unknownCallRows\":3}}}")), elapsed: 0.05)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"details\":{\"truncated\":true,\"totals\":{\"unknownCallRows\":3}}}")), elapsed: 0.05)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             _ = await drainModel(m)
@@ -179,7 +179,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .failure("Collector exit 1"), elapsed: 0.05),
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":9}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":9}")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -407,7 +407,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":99}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":99}")), elapsed: 0.05),
                     CollectorOutcome(kind: .noStores("no Hermes Agent session store found"), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -428,7 +428,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .success(jsonData(
-                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05)
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05)
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -443,8 +443,8 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":77}")), elapsed: 0.05),
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":77}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -462,7 +462,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .success(jsonData(
-                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -496,7 +496,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":500}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":500}")), elapsed: 0.05),
                     CollectorOutcome(kind: .success(jsonData("{}")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -564,7 +564,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .success(jsonData("{}")), elapsed: 0.05),
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":300}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":300}")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -584,7 +584,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .success(jsonData(
-                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -598,16 +598,21 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"other-agent\",\"name\":\"Other Agent\",\"hasLocalStats\":true}")), elapsed: 0.05)
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true,\"todayTotalTokens\":400}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"other-agent\",\"name\":\"Other Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}")), elapsed: 0.05)
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             _ = await drainModel(m)
-            // Wrong producer has id/name/hasLocalStats but different values.
-            // Current validation checks presence, not exact values.
-            // This is intentional: we accept any producer that has the required fields.
-            // A stricter check could be added later if needed.
-            expect(m.loadState == .success, "producer with id/name/hasLocalStats accepted")
+            // First load succeeds with valid producer
+            expect(m.loadState == .success, "first valid load succeeds")
+            expect(m.record?.todayTotalTokens == 400, "valid record has 400 tokens")
+            // Trigger second refresh to consume the wrong-producer outcome
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            // Second load with wrong producer is rejected
+            expect(m.loadState == .stale("Usage format not recognized"), "wrong producer makes model stale")
+            expect(m.record?.todayTotalTokens == 400, "previous valid record retained (400 tokens)")
         }
 
         print("")

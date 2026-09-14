@@ -6,6 +6,7 @@ import AppKit
 struct UsageRecord: Codable {
     let id: String?
     let name: String?
+    let schemaVersion: Int?
     let updatedAt: String?
     let hasLocalStats: Bool?
     let todayPrompts: Int?
@@ -619,16 +620,18 @@ final class UsageModel: ObservableObject {
     }
 
     /// A6: validate the minimum supported record contract before accepting a
-    /// result as fresh. The bundled producer always emits id, name,
-    /// hasLocalStats and bounded-history metadata (collector hermes-usage.py:
-    /// 601-610, 644-659). An object missing all of these is not from a
-    /// compatible producer — reject it and retain any previous valid record
-    /// as stale, so an incompatible producer cannot silently erase known data.
-    /// Fixtures in the test suite carry these identity fields explicitly.
+    /// result as fresh. The bundled producer always emits id="hermes",
+    /// name="Hermes Agent", schemaVersion=1, hasLocalStats and bounded-history
+    /// metadata (collector hermes-usage.py:52-53, 601-610, 644-659). A record
+    /// that does not match this identity is not from a compatible producer —
+    /// reject it and retain any previous valid record as stale.
     private func isValidRecord(_ rec: UsageRecord) -> Bool {
-        // Producer identity: id and name are always emitted by the bundled
-        // producer. An object without them is not recognisably from Hermes.
-        guard rec.id != nil, rec.name != nil else { return false }
+        // Producer identity: the bundled collector always emits these exact
+        // values (hermes-usage.py:52-53, 601-604). A record with a different
+        // id/name or missing schemaVersion is not from Hermes.
+        guard rec.id == "hermes" else { return false }
+        guard rec.name == "Hermes Agent" else { return false }
+        guard rec.schemaVersion == 1 else { return false }
         // hasLocalStats distinguishes "no data yet" (false) from "has data"
         // (true). An object without it cannot be classified.
         guard rec.hasLocalStats != nil else { return false }
