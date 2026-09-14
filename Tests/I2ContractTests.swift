@@ -794,6 +794,35 @@ struct I2Tests {
             expect(resolveProviderCost(rec: nilDetailNonNilLegacy, providerName: "anthropic", legacyCost: 0.0) == nil, "resolveProviderCost returns nil for nil detail (F5)")
         }
 
+        // F3: formatWorkloadAccessibilitySummary names unavailable values explicitly
+        print("F3: formatWorkloadAccessibilitySummary")
+        do {
+            let allPresent = formatWorkloadAccessibilitySummary(
+                (name: "ordinary", tokens: 12_600_000, calls: 234, estimatedUsd: 1.23))
+            expect(allPresent == "Ordinary, 234 calls, 12.6M tokens, Cost $1.23",
+                   "all present → '\(allPresent)'")
+
+            let nilCalls = formatWorkloadAccessibilitySummary(
+                (name: "unknown", tokens: 730_000, calls: nil, estimatedUsd: nil))
+            expect(nilCalls == "Unknown, Calls not recorded, 730k tokens, Cost unavailable; not zero",
+                   "nil calls+cost → '\(nilCalls)'")
+
+            let nilTokens = formatWorkloadAccessibilitySummary(
+                (name: "other", tokens: nil, calls: 5, estimatedUsd: 0.0))
+            expect(nilTokens == "Other, 5 calls, Tokens not recorded, Cost $0.00",
+                   "nil tokens, known zero cost → '\(nilTokens)'")
+
+            let allNil = formatWorkloadAccessibilitySummary(
+                (name: "some-task", tokens: nil, calls: nil, estimatedUsd: nil))
+            expect(allNil == "some-task, Calls not recorded, Tokens not recorded, Cost unavailable; not zero",
+                   "all nil → '\(allNil)'")
+
+            // Explicit task strings pass through unchanged (B2)
+            let explicit = formatWorkloadAccessibilitySummary(
+                (name: "dr-smith-followup", tokens: 500, calls: 2, estimatedUsd: 0.05))
+            expect(explicit.contains("dr-smith-followup"), "explicit task name passes through")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)

@@ -240,6 +240,38 @@ func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
     return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
 }
 
+/// F3: Format explicit accessibility summary for a workload row.
+/// Names unavailable values rather than relying on punctuation or inherited help.
+func formatWorkloadAccessibilitySummary(_ task: (name: String, tokens: Int?, calls: Int?, estimatedUsd: Double?)) -> String {
+    var parts: [String] = [taskLabel(task.name)]
+    
+    if let calls = task.calls {
+        parts.append("\(calls) calls")
+    } else {
+        parts.append("Calls not recorded")
+    }
+    
+    if let tokens = task.tokens {
+        parts.append("\(compactTokens(Double(tokens))) tokens")
+    } else {
+        parts.append("Tokens not recorded")
+    }
+    
+    if let usd = task.estimatedUsd {
+        parts.append("Cost \(compactCost(usd))")
+    } else {
+        parts.append("Cost unavailable; not zero")
+    }
+    
+    return parts.joined(separator: ", ")
+}
+
+/// F5: Check if any workload row has a nil estimated cost.
+func hasNilWorkloadCost(_ rec: UsageRecord) -> Bool {
+    guard let tasks = rec.details?.tasks else { return false }
+    return tasks.values.contains { $0.estimatedUsd == nil }
+}
+
 /// F6: Format call-coverage warning for the summary.
 /// Uses the same phrasing as formatCallAvailability for consistency.
 func formatCallCoverageWarning(unknownCallRows: Int) -> String {
@@ -1076,10 +1108,12 @@ struct ContentView: View {
                                 .font(.caption)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                                .help(entry.key)
                             Spacer()
                             Text(compactTokens(Double(entry.value)))
                                 .font(.caption.monospacedDigit())
                                 .frame(width: 52, alignment: .trailing)
+                                .help(exactTokens(Double(entry.value)))
                         }
                     }
                 }
@@ -1377,10 +1411,10 @@ struct ContentView: View {
                         Text("Task")
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Text("Calls")
-                            .frame(width: 36, alignment: .trailing)
+                            .frame(width: 56, alignment: .trailing)
                         Text("Tokens")
                             .frame(width: 44, alignment: .trailing)
-                        Text("Cost")
+                        Text("Est. USD")
                             .frame(width: 50, alignment: .trailing)
                     }
                     .font(.caption2.weight(.semibold))
@@ -1394,39 +1428,37 @@ struct ContentView: View {
                                 .foregroundStyle(.primary)
                             Spacer()
                             if let calls = task.calls {
-                                Text("\(calls)")
+                                Text(compactTokens(Double(calls)))
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 36, alignment: .trailing)
-                                    .accessibilityLabel("\(calls) calls")
+                                    .frame(width: 56, alignment: .trailing)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
                             } else {
                                 Text("—")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 36, alignment: .trailing)
-                                    .accessibilityLabel("Calls not recorded")
+                                    .frame(width: 56, alignment: .trailing)
                             }
                             if let tokens = task.tokens {
                                 Text(compactTokens(Double(tokens)))
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(.secondary)
                                     .frame(width: 44, alignment: .trailing)
-                                    .accessibilityLabel("\(compactTokens(Double(tokens))) tokens")
                             } else {
                                 Text("—")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .frame(width: 44, alignment: .trailing)
-                                    .accessibilityLabel("Tokens not recorded")
                             }
                             Text(compactCost(task.estimatedUsd))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                                 .frame(width: 50, alignment: .trailing)
-                                .accessibilityLabel(task.estimatedUsd != nil ? "Cost \(compactCost(task.estimatedUsd))" : "Cost unavailable; not zero")
                                 .help(costHelp(task.estimatedUsd))
                         }
-                        .accessibilityElement(children: .combine)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(formatWorkloadAccessibilitySummary(task))
                     }
                 }
 
