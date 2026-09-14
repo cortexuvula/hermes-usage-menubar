@@ -907,6 +907,7 @@ struct ContentView: View {
             HStack {
                 Image(systemName: "chart.bar.fill")
                     .foregroundStyle(Color.accentColor)
+                    .accessibilityHidden(true)
                 Text("Hermes Agent Usage")
                     .font(.headline)
                 Spacer()
@@ -1268,6 +1269,8 @@ struct ContentView: View {
         .padding(.vertical, 5)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
         .help(help)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label) \(value)")
     }
 
     private func modelsSection(_ rec: UsageRecord) -> some View {
