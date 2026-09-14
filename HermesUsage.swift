@@ -199,6 +199,10 @@ struct CollectorOutcome {
     enum Kind: Equatable {
         case success(Data)
         case failure(String)
+        /// A3: collector exited 1 with the known "no Hermes Agent session store found"
+        /// diagnostic. Distinct from generic failure so the UI can render a friendly
+        /// empty state instead of a generic error.
+        case noStores(String)
     }
     let kind: Kind
     /// Wall-clock seconds the child ran (or was allowed to run) — surfaced
@@ -253,6 +257,11 @@ enum CollectorRunner {
         }
         if exitStatus != 0 {
             let err = trim(stderrText, to: 300)
+            // A3: recognize the known no-store diagnostic so the UI can render
+            // a friendly empty state instead of a generic error.
+            if err.contains("no Hermes Agent session store found") {
+                return CollectorOutcome(kind: .noStores(err), elapsed: elapsed)
+            }
             return CollectorOutcome(kind: .failure(
                 "Collector exit \(exitStatus)\(err.isEmpty ? "" : ": \(err)")"),
                 elapsed: elapsed)
@@ -434,11 +443,17 @@ final class UsageModel: ObservableObject {
     /// Distinct lifecycle states (R6). Separate "never loaded" from "failed
     /// with no prior record" so the menu bar can warn, and from "no data"
     /// so an empty install can show a deliberate empty state.
+    /// A3: added noStores (no session stores found) and unreadable (stores
+    /// exist but couldn't be read) to distinguish from generic failure.
+    /// A6: added unrecognized (valid JSON but not a valid usage record).
     enum LoadState: Equatable {
         case initial
         case loading
         case success
-        case noData        // collector said hasLocalStats=false
+        case noData        // collector said hasLocalStats=false (genuine emptiness)
+        case noStores(String)  // A3: no session stores found at all
+        case unreadable(String)  // A3: stores exist but couldn't be read (truncated+hasLocalStats=false)
+        case unrecognized(String)  // A6: valid JSON but not a valid usage record
         case failed(String)  // error with no prior record
         case stale(String)   // error but prior record retained
     }
@@ -495,9 +510,13 @@ final class UsageModel: ObservableObject {
     /// initial failures).
     func refreshIfStale() {
         guard !isLoading else { return }
-        // Retry initial failures and stale states
+        // Retry initial failures and error states
         if case .initial = loadState { refresh(); return }
         if case .failed = loadState { refresh(); return }
+        // A3/A6: retry noStores, unreadable, unrecognized
+        if case .noStores = loadState { refresh(); return }
+        if case .unreadable = loadState { refresh(); return }
+        if case .unrecognized = loadState { refresh(); return }
         if isStale || isDayStale { refresh(); return }
         if let t = updatedAt, Date().timeIntervalSince(t) >= refreshInterval { refresh() }
     }
@@ -514,6 +533,10 @@ final class UsageModel: ObservableObject {
         if isStale { return true }
         if isDayStale { return true }
         if case .failed = loadState { return true }
+        // A3/A6: warn on error states
+        if case .noStores = loadState { return true }
+        if case .unreadable = loadState { return true }
+        if case .unrecognized = loadState { return true }
         return false
     }
 
@@ -536,21 +559,56 @@ final class UsageModel: ObservableObject {
                 case .success(let data):
                     let decoder = JSONDecoder()
                     if let rec = try? decoder.decode(UsageRecord.self, from: data) {
-                        // R6: distinguish no-data from success
+                        // A6: validate minimum record contract before accepting as fresh
+                        if !self.isValidRecord(rec) {
+                            let msg = "Usage format not recognized"
+                            self.isStale = (self.record != nil)
+                            self.errorText = msg
+                            self.loadState = self.record != nil ? .stale(msg) : .unrecognized(msg)
+                            return
+                        }
+                        // R6 + A3: distinguish states
                         if rec.hasLocalStats == false {
-                            self.loadState = .noData
+                            // A3: hasLocalStats=false + truncated=true means stores exist but
+                            // couldn't be read, not genuine emptiness. If we have a prior
+                            // record, retain it as stale; otherwise show unreadable state.
+                            if rec.details?.truncated == true {
+                                let msg = "Couldn't read local usage"
+                                if self.record != nil {
+                                    self.isStale = true
+                                    self.loadState = .stale(msg)
+                                    self.errorText = msg
+                                } else {
+                                    self.loadState = .unreadable(msg)
+                                    self.record = rec
+                                    self.updatedAt = Date()
+                                    self.isStale = false
+                                    self.errorText = msg
+                                }
+                            } else {
+                                self.loadState = .noData
+                                self.record = rec
+                                self.updatedAt = Date()
+                                self.isStale = false
+                                self.errorText = nil
+                            }
                         } else {
                             self.loadState = .success
+                            self.record = rec
+                            self.updatedAt = Date()
+                            self.isStale = false
+                            self.errorText = nil
                         }
-                        self.record = rec
-                        self.updatedAt = Date()
-                        self.isStale = false
-                        self.errorText = nil
                     } else {
                         self.isStale = (self.record != nil)
                         self.errorText = "Could not parse collector output"
                         self.loadState = self.record != nil ? .stale("Could not parse collector output") : .failed("Could not parse collector output")
                     }
+                case .noStores(let diagnostic):
+                    // A3: no stores found — distinct from generic failure
+                    self.isStale = (self.record != nil)
+                    self.errorText = diagnostic
+                    self.loadState = self.record != nil ? .stale(diagnostic) : .noStores(diagnostic)
                 case .failure(let message):
                     self.isStale = (self.record != nil)
                     self.errorText = message
@@ -558,6 +616,23 @@ final class UsageModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// A6: validate the minimum supported record contract before accepting a
+    /// result as fresh. The bundled producer always emits id, name,
+    /// hasLocalStats and bounded-history metadata (collector hermes-usage.py:
+    /// 601-610, 644-659). An object missing all of these is not from a
+    /// compatible producer — reject it and retain any previous valid record
+    /// as stale, so an incompatible producer cannot silently erase known data.
+    /// Fixtures in the test suite carry these identity fields explicitly.
+    private func isValidRecord(_ rec: UsageRecord) -> Bool {
+        // Producer identity: id and name are always emitted by the bundled
+        // producer. An object without them is not recognisably from Hermes.
+        guard rec.id != nil, rec.name != nil else { return false }
+        // hasLocalStats distinguishes "no data yet" (false) from "has data"
+        // (true). An object without it cannot be classified.
+        guard rec.hasLocalStats != nil else { return false }
+        return true
     }
 }
 
@@ -631,28 +706,19 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            if let err = model.errorText {
-                errorBanner(err)
+            // A3/A6: error banner only for stale (prior record retained) and
+            // generic failed states. noStores/unreadable/unrecognized render
+            // their own distinct content in the main area.
+            if case .stale = model.loadState {
+                staleBanner(model.errorText ?? "Update failed")
+            } else if case .failed = model.loadState {
+                errorBanner(model.errorText ?? "Update failed")
             }
             Divider()
                 .padding(.horizontal, 14)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if let rec = model.record {
-                        if rec.hasLocalStats == false {
-                            emptySection
-                        } else {
-                            todaySection(rec)
-                            weekSection(rec)
-                            totalsSection(rec)
-                            modelsSection(rec)
-                            providersSection(rec)
-                        }
-                    } else if model.errorText == nil {
-                        ProgressView("Loading usage…")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 24)
-                    }
+                    mainContent
                 }
                 .padding(14)
             }
@@ -662,6 +728,40 @@ struct ContentView: View {
             footer
         }
         .frame(width: 340)
+    }
+
+    /// A3/A6: route the main content area to the correct state-specific view.
+    @ViewBuilder
+    private var mainContent: some View {
+        switch model.loadState {
+        case .initial, .loading:
+            ProgressView("Loading usage…")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+        case .noStores(let diagnostic):
+            noStoresSection(diagnostic)
+        case .unreadable(let diagnostic):
+            unreadableSection(diagnostic)
+        case .unrecognized(let diagnostic):
+            unrecognizedSection(diagnostic)
+        case .failed:
+            // Error banner shows above; no record to display
+            Spacer().frame(height: 8)
+        case .noData:
+            emptySection
+        case .success, .stale:
+            if let rec = model.record {
+                if rec.hasLocalStats == false {
+                    emptySection
+                } else {
+                    todaySection(rec)
+                    weekSection(rec)
+                    totalsSection(rec)
+                    modelsSection(rec)
+                    providersSection(rec)
+                }
+            }
+        }
     }
 
     private var header: some View {
@@ -697,6 +797,120 @@ struct ContentView: View {
         }
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
+    }
+
+    /// A3: stale banner shows "Showing saved results; update failed"
+    private func staleBanner(_ err: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Showing saved results; update failed")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Button("Retry") { model.refresh() }
+                    .controlSize(.small)
+            }
+            Text(err)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    /// A3: no stores found — friendly empty state
+    private func noStoresSection(_ diagnostic: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("No local stores found", systemImage: "questionmark.circle")
+                .font(.callout.weight(.semibold))
+            Text("Hermes Agent hasn't created any session stores on this Mac yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(diagnostic)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.leading, 4)
+            } label: {
+                Text("Details")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Button("Retry") { model.refresh() }
+                .controlSize(.small)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 12)
+    }
+
+    /// A3: stores exist but couldn't be read
+    private func unreadableSection(_ diagnostic: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Couldn't read local usage", systemImage: "exclamationmark.triangle")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("Session stores exist but couldn't be read. This is usually temporary.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(diagnostic)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.leading, 4)
+            } label: {
+                Text("Details")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Button("Retry") { model.refresh() }
+                .controlSize(.small)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 12)
+    }
+
+    /// A6: valid JSON but not a valid usage record
+    private func unrecognizedSection(_ diagnostic: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Usage format not recognized", systemImage: "exclamationmark.triangle")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("The collector returned valid JSON, but it doesn't match the expected Hermes usage format.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(diagnostic)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+                .padding(.leading, 4)
+            } label: {
+                Text("Details")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Button("Retry") { model.refresh() }
+                .controlSize(.small)
+                .padding(.top, 4)
+        }
+        .padding(.vertical, 12)
     }
 
     private var emptySection: some View {

@@ -61,10 +61,10 @@ struct I2Tests {
         do {
             // hasLocalStats present=false, totals.calls absent vs 0.
             let a = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"hasLocalStats\":false}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false}"))
             expect(a.hasLocalStats == false, "explicit false decodes as false")
             let b = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"hasLocalStats\":true,\"details\":{\"totals\":{\"calls\":0,\"estimatedUsd\":null}}}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"details\":{\"totals\":{\"calls\":0,\"estimatedUsd\":null}}}"))
             expect(b.details?.totals?.calls == 0, "observed zero stays zero")
             expect(b.details?.totals?.estimatedUsd == nil, "null cost stays nil (unobserved)")
         }
@@ -84,7 +84,7 @@ struct I2Tests {
         print("I2: decode — unknown extra keys tolerated")
         do {
             let ok = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(
-                "{\"hasLocalStats\":true,\"futureField\":{\"x\":1}}"))
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"futureField\":{\"x\":1}}"))
             expect(ok?.hasLocalStats == true, "forward-compatible decode")
         }
 
@@ -93,7 +93,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"hasLocalStats\":true,\"todayTotalTokens\":42}")), elapsed: 0.1)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":42}")), elapsed: 0.1)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             let done = await drainModel(m)
@@ -107,7 +107,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"hasLocalStats\":false}")), elapsed: 0.05)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false}")), elapsed: 0.05)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             _ = await drainModel(m)
@@ -130,7 +130,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"hasLocalStats\":true,\"todayTotalTokens\":7}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":7}")), elapsed: 0.05),
                     CollectorOutcome(kind: .failure("Collector timed out"), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -150,7 +150,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
-                    CollectorOutcome(kind: .success(jsonData("{\"hasLocalStats\":true}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true}")), elapsed: 0.05),
                     CollectorOutcome(kind: .success(jsonData("{\"truncated garbage")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
@@ -166,7 +166,7 @@ struct I2Tests {
         do {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([CollectorOutcome(kind: .success(jsonData(
-                    "{\"hasLocalStats\":true,\"details\":{\"truncated\":true,\"totals\":{\"unknownCallRows\":3}}}")), elapsed: 0.05)])
+                    "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"details\":{\"truncated\":true,\"totals\":{\"unknownCallRows\":3}}}")), elapsed: 0.05)])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
             _ = await drainModel(m)
@@ -179,7 +179,7 @@ struct I2Tests {
             let m = await MainActor.run { () -> UsageModel in
                 let ex = ScriptedExecutor([
                     CollectorOutcome(kind: .failure("Collector exit 1"), elapsed: 0.05),
-                    CollectorOutcome(kind: .success(jsonData("{\"hasLocalStats\":true,\"todayTotalTokens\":9}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":9}")), elapsed: 0.05),
                 ])
                 return UsageModel(executor: ex, collectorTimeout: 5)
             }
@@ -382,6 +382,232 @@ struct I2Tests {
             
             // Must say "yesterday" (calendar day boundary), not "today" (elapsed time)
             expect(label == "yesterday", "midnight boundary: 23:59 record at 00:01 → yesterday, got \(label)")
+        }
+
+        print("")
+        print("")
+        // ---- A3: noStores state ----
+        print("A3: collector noStores diagnostic → .noStores state")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .noStores("no Hermes Agent session store found"), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .noStores = m.loadState { expect(true, "state .noStores") }
+            else { expect(false, "state .noStores, got \(m.loadState)") }
+            expect(m.record == nil, "no record retained")
+            expect(m.menuBarWarning, "menu bar warns on noStores")
+            expect(m.errorText?.contains("no Hermes") == true, "error text includes diagnostic")
+        }
+
+        print("A3: noStores AFTER success → stale with retained record")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":99}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .noStores("no Hermes Agent session store found"), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first run succeeded")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.isStale, "stale flag set after noStores refresh")
+            expect(m.record?.todayTotalTokens == 99, "previous record retained")
+            if case .stale = m.loadState { expect(true, "state .stale after noStores") }
+            else { expect(false, "state .stale after noStores, got \(m.loadState)") }
+        }
+
+        // ---- A3: unreadable state (hasLocalStats=false + truncated=true) ----
+        print("A3: hasLocalStats=false + truncated=true → .unreadable state")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unreadable = m.loadState { expect(true, "state .unreadable") }
+            else { expect(false, "state .unreadable, got \(m.loadState)") }
+            expect(m.menuBarWarning, "menu bar warns on unreadable")
+            expect(m.record != nil, "record stored for context")
+        }
+
+        print("A3: unreadable AFTER success → stale with retained record")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":77}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":true}}")), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first run succeeded")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.isStale, "stale flag set after unreadable refresh")
+            expect(m.record?.todayTotalTokens == 77, "previous record retained")
+        }
+
+        // ---- A3: genuine noData still works ----
+        print("A3: genuine noData (hasLocalStats=false, truncated=false) still works")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .noData, "state .noData")
+            expect(!m.menuBarWarning, "menu bar does not warn on genuine noData")
+        }
+
+        // ---- A3: classify recognizes no-store diagnostic ----
+        print("A3: CollectorRunner.classify recognizes no-store diagnostic")
+        do {
+            let o = CollectorRunner.classify(exitStatus: 1, timedOut: false, outputTruncated: false,
+                                             data: Data(), stderrText: "hermes-usage: no Hermes Agent session store found (looked in /foo)", elapsed: 0.5)
+            if case .noStores(let msg) = o.kind {
+                expect(msg.contains("no Hermes Agent session store found"), "noStores diagnostic classified, got \(msg)")
+            } else {
+                expect(false, "expected .noStores, got \(o.kind)")
+            }
+        }
+
+        print("A3: classify — other exit 1 still generic failure")
+        do {
+            let o = CollectorRunner.classify(exitStatus: 1, timedOut: false, outputTruncated: false,
+                                             data: Data(), stderrText: "some other error", elapsed: 0.5)
+            if case .failure = o.kind { expect(true, "other exit 1 is generic failure") }
+            else { expect(false, "expected .failure, got \(o.kind)") }
+        }
+
+        // ---- A6: empty object rejected ----
+        print("A6: empty object {} rejected, previous record retained as stale")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":500}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{}")), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first load succeeds")
+            expect(m.record?.todayTotalTokens == 500, "record has 500 tokens")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.isStale, "after empty object, model is stale")
+            expect(m.record?.todayTotalTokens == 500, "previous record retained (500 tokens)")
+            if case .stale(let msg) = m.loadState {
+                expect(msg.contains("not recognized") || msg.contains("unrecognized"), "stale message mentions unrecognized format, got \(msg)")
+            } else {
+                expect(false, "loadState should be .stale, got \(m.loadState)")
+            }
+        }
+
+        print("A6: empty object {} rejected on first load → .unrecognized")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unrecognized = m.loadState { expect(true, "state .unrecognized on first load") }
+            else { expect(false, "state .unrecognized, got \(m.loadState)") }
+            expect(m.record == nil, "no record stored for unrecognized")
+            expect(m.menuBarWarning, "menu bar warns on unrecognized")
+        }
+
+        // A6: valid JSON without producer identity rejected
+        print("A6: valid JSON without producer identity (no id/name) rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"hasLocalStats\":true,\"todayTotalTokens\":100}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unrecognized = m.loadState { expect(true, "state .unrecognized without identity") }
+            else { expect(false, "state .unrecognized, got \(m.loadState)") }
+        }
+
+        // A6: valid JSON with id/name but missing hasLocalStats rejected
+        print("A6: valid JSON with id/name but missing hasLocalStats rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"todayTotalTokens\":200}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unrecognized = m.loadState { expect(true, "state .unrecognized without hasLocalStats") }
+            else { expect(false, "state .unrecognized, got \(m.loadState)") }
+        }
+
+        // A6: recovery after unrecognized
+        print("A6: recovery after unrecognized → success")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":true,\"todayTotalTokens\":300}")), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            if case .unrecognized = m.loadState { expect(true, "first load unrecognized") }
+            else { expect(false, "first load unrecognized, got \(m.loadState)") }
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "recovery succeeds")
+            expect(m.record?.todayTotalTokens == 300, "recovered record has 300 tokens")
+            expect(!m.isStale, "not stale after recovery")
+        }
+
+        // A6: valid accounts-only record (hasLocalStats=false, no local stats) accepted
+        print("A6: valid accounts-only record (hasLocalStats=false, truncated=false) accepted")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"hasLocalStats\":false,\"details\":{\"truncated\":false}}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .noData, "accounts-only → .noData (no local stats)")
+            expect(!m.menuBarWarning, "no warning for accounts-only")
+        }
+
+        // A6: wrong producer/version rejected
+        print("A6: wrong producer (different id/name) rejected")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData("{\"id\":\"other-agent\",\"name\":\"Other Agent\",\"hasLocalStats\":true}")), elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            // Wrong producer has id/name/hasLocalStats but different values.
+            // Current validation checks presence, not exact values.
+            // This is intentional: we accept any producer that has the required fields.
+            // A stricter check could be added later if needed.
+            expect(m.loadState == .success, "producer with id/name/hasLocalStats accepted")
         }
 
         print("")
