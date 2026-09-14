@@ -72,8 +72,19 @@ func compactCost(_ n: Double?) -> String {
 }
 
 /// Exact localized count for hover help / accessibility, e.g. "3,234,511 tokens".
+/// R8: String(format: "%,.0f tokens", n) is not a valid printf conversion —
+/// Swift's printf does not support the thousands-separator flag, so it
+/// emitted the literal ",.0f tokens" text. Use NumberFormatter for proper
+/// localized grouping.
 func exactTokens(_ n: Double) -> String {
-    String(format: "%,.0f tokens", n)
+    let f = NumberFormatter()
+    f.numberStyle = .decimal
+    f.maximumFractionDigits = 0
+    f.minimumFractionDigits = 0
+    f.groupingSeparator = ","
+    f.usesGroupingSeparator = true
+    let s = f.string(from: NSNumber(value: n)) ?? String(Int(n))
+    return "\(s) tokens"
 }
 
 let dayParser: DateFormatter = {
