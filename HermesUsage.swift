@@ -596,6 +596,18 @@ struct ContentView: View {
     private func providersSection(_ rec: UsageRecord) -> some View {
         let rows = sortedProviders(rec)
         let total = rec.providerUsage?.count ?? rows.count
+        // Pre-compute costs with proper nil handling (R3).
+        // When detail data exists, preserve its nil (unobserved) → renders "—".
+        // Only fall back to legacy when detail is absent entirely.
+        let rowsWithCost = rows.map { providerName, providerUsage in
+            let cost: Double?
+            if let detail = rec.details?.providers?[providerName] {
+                cost = detail.estimatedUsd
+            } else {
+                cost = providerUsage.estimatedCostUsd
+            }
+            return (providerName, providerUsage, cost)
+        }
         return DisclosureGroup {
             if rows.isEmpty {
                 Text("No provider data")
@@ -613,12 +625,8 @@ struct ContentView: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 2)
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    let providerName = row.0
-                    let providerUsage = row.1
-                    // R3: prefer detail data (nullable) over legacy field (coerces NULL to 0.0)
-                    let detail = rec.details?.providers?[providerName]
-                    let costUsd = detail?.estimatedUsd ?? providerUsage.estimatedCostUsd
+                ForEach(Array(rowsWithCost.enumerated()), id: \.offset) { _, row in
+                    let (providerName, providerUsage, costUsd) = row
                     HStack {
                         Text(providerLabel(providerName))
                             .font(.caption)
