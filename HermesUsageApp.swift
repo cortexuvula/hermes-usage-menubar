@@ -28,12 +28,15 @@ struct HermesUsageApp: App {
         return "…"
     }
 
+    /// F8: menuBarHelp qualifies the snapshot date using dayAgeLabel, so the
+    /// help text agrees with the status item AXTitle and the body heading.
     private var menuBarHelp: String {
+        let age = dayAgeLabel(updatedAt: model.updatedAt)
         var parts: [String] = []
         if let rec = model.record, let t = rec.todayTotalTokens {
-            parts.append("Today: \(exactTokens(Double(t)))")
+            parts.append("\(age.capitalized): \(exactTokens(Double(t)))")
         } else {
-            parts.append("Today: —")
+            parts.append("\(age.capitalized): —")
         }
         parts.append("This Mac · all profiles")
         if let u = model.updatedAt {
@@ -67,12 +70,15 @@ struct MenuBarLabelView: View {
         return "…"
     }
 
+    /// F8: menuBarHelp qualifies the snapshot date using dayAgeLabel, so the
+    /// help text agrees with the status item AXTitle and the body heading.
     private var menuBarHelp: String {
+        let age = dayAgeLabel(updatedAt: model.updatedAt)
         var parts: [String] = []
         if let rec = model.record, let t = rec.todayTotalTokens {
-            parts.append("Today: \(exactTokens(Double(t)))")
+            parts.append("\(age.capitalized): \(exactTokens(Double(t)))")
         } else {
-            parts.append("Today: —")
+            parts.append("\(age.capitalized): —")
         }
         parts.append("This Mac · all profiles")
         if let u = model.updatedAt {

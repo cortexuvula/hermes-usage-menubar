@@ -238,6 +238,13 @@ func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
     return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
 }
 
+/// F6: Format call-coverage warning for the summary.
+/// Uses the same phrasing as formatCallAvailability for consistency.
+func formatCallCoverageWarning(unknownCallRows: Int) -> String {
+    let plural = unknownCallRows == 1 ? "row" : "rows"
+    return "⚠️ Call count unavailable for \(unknownCallRows) usage \(plural)"
+}
+
 /// Resolve the display cost for a provider row (R3).
 /// When detail data exists: normalize its keys to match providerUsage keys,
 /// then look up. A miss with details present means cost was never observed → nil.
@@ -881,21 +888,6 @@ struct ContentView: View {
         .padding(.top, 14)
     }
 
-    private func errorBanner(_ err: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text("Update failed: \(err)")
-                .font(.caption)
-                .lineLimit(2)
-            Spacer()
-            Button("Retry") { model.refresh() }
-                .controlSize(.small)
-        }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 8)
-    }
-
     /// A3: stale banner shows "Showing saved results; update failed"
     private func staleBanner(_ err: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -979,30 +971,20 @@ struct ContentView: View {
         .padding(.vertical, 12)
     }
 
-    /// F1: first-run failure with wrapped diagnostic
+    /// F1: first-run failure — full diagnostic visible as body text, not hidden
+    /// behind a disclosure. The long reason and path must be fully readable at
+    /// 340pt without hover, AX, or expanding a Details group.
     private func failedSection(_ diagnostic: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Update failed", systemImage: "exclamationmark.triangle")
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(.red)
-            Text("The usage collector encountered an error and couldn't retrieve data.")
+            // F1: diagnostic as visible body text — not truncated, not hidden
+            Text(diagnostic)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(diagnostic)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
-                .padding(.leading, 4)
-            } label: {
-                Text("Details")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+                .textSelection(.enabled)
             Button("Retry") { model.refresh() }
                 .controlSize(.small)
                 .padding(.top, 4)
@@ -1134,10 +1116,20 @@ struct ContentView: View {
         }
     }
 
+    /// F6: totals section uses spec-mandated labels — "Collected history" (not
+    /// "All-time"), "Reported calls" (not "Calls"), and qualified warnings that
+    /// match the expanded disclosure wording.
     private func totalsSection(_ rec: UsageRecord) -> some View {
         let truncated = rec.details?.truncated == true
+        let unknownCalls = rec.details?.totals?.unknownCallRows ?? 0
         return VStack(alignment: .leading, spacing: 6) {
-            Label(truncated ? "All-time (partial)" : "All-time", systemImage: "clock")
+            // F6: collection-status line ABOVE the metrics, qualified label
+            if truncated {
+                Text("⚠️ Partial local collection — totals may omit older activity.")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            Label(truncated ? "Collected history (partial)" : "Collected history", systemImage: "clock")
                 .font(.subheadline.weight(.semibold))
                 .help(truncated
                     ? "Totals from partial local collection — some older activity may be omitted."
@@ -1145,19 +1137,15 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 let allTokens = rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0
                 totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(Double(allTokens)))
-                totalChip("Calls", rec.details?.totals?.calls.map(String.init) ?? "—",
-                          help: rec.details?.totals?.calls.map { "\($0) calls" } ?? "")
+                // F6: "Reported calls" not "Calls"
+                totalChip("Reported calls", rec.details?.totals?.calls.map(String.init) ?? "—",
+                          help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
             }
-            // R2: surface incomplete collection and call coverage
-            if let details = rec.details, details.truncated == true {
-                Text("⚠️ Partial collection — some data was truncated")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            }
-            if let unknownCalls = rec.details?.totals?.unknownCallRows, unknownCalls > 0 {
-                Text("⚠️ \(unknownCalls) call row\(unknownCalls == 1 ? "" : "s") with missing data")
+            // F6: qualified call-coverage warning matching the disclosure wording
+            if unknownCalls > 0 {
+                Text(formatCallCoverageWarning(unknownCallRows: unknownCalls))
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }

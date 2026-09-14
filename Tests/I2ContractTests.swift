@@ -725,6 +725,18 @@ struct I2Tests {
             expect(singular == "10 reported calls; call count unavailable for 1 usage row", "10 calls with 1 unknown row (singular)")
         }
 
+        // F6: formatCallCoverageWarning
+        print("F6: formatCallCoverageWarning")
+        do {
+            let singular = formatCallCoverageWarning(unknownCallRows: 1)
+            expect(singular == "⚠️ Call count unavailable for 1 usage row", "singular: 1 row")
+            let plural = formatCallCoverageWarning(unknownCallRows: 5)
+            expect(plural == "⚠️ Call count unavailable for 5 usage rows", "plural: 5 rows")
+            // Verify it matches the phrasing in formatCallAvailability
+            let avail = formatCallAvailability(calls: 100, unknownCallRows: 3)
+            expect(avail.contains("call count unavailable for 3 usage rows"), "matches formatCallAvailability phrasing")
+        }
+
         // F2: repeated unreadable must stay .unreadable, not become false saved-results
         print("F2: repeated unreadable stays .unreadable (no false saved-results)")
         do {
