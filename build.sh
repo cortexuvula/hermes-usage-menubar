@@ -1,14 +1,36 @@
 #!/bin/bash
 # Build Hermes Usage menu bar app for macOS
+# R4: resolves the project root from this script's own location so any
+# checkout builds correctly; the upstream collector location is configurable
+# via COLLECTOR_SRC (env var) and validated BEFORE any output is removed.
 set -euo pipefail
 
-SRC="/Users/cortexuvula/Development/hermes-usage-menubar"
-COLLECTOR_SRC="/Users/cortexuvula/Development/omarchy-hermes-usage"
+# Project root = directory containing this script, wherever the clone lives.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC="${HERMES_USAGE_SRC:-$SCRIPT_DIR}"
+# Upstream collector checkout — override with COLLECTOR_SRC env var.
+COLLECTOR_SRC="${COLLECTOR_SRC:-$HOME/Development/omarchy-hermes-usage}"
+# Install destination — override to build without touching ~/Applications.
+INSTALL_DIR="${HERMES_USAGE_INSTALL_DIR:-$HOME/Applications}"
+
 APP="$SRC/build/HermesUsage.app"
 CONTENTS="$APP/Contents"
 BIN="$CONTENTS/MacOS"
 RES="$CONTENTS/Resources"
 
+fail() { echo "build.sh: $1" >&2; exit 1; }
+
+# ---- Validate all inputs BEFORE removing any output (R4) ----
+[ -f "$SRC/HermesUsage.swift" ] || fail "Swift source not found at $SRC/HermesUsage.swift (set HERMES_USAGE_SRC?)"
+[ -f "$SRC/HermesUsageApp.swift" ] || fail "Swift source not found at $SRC/HermesUsageApp.swift"
+[ -f "$SRC/make_icon.py" ] || fail "Icon generator not found at $SRC/make_icon.py"
+[ -f "$COLLECTOR_SRC/collector/hermes-usage.py" ] || fail "Collector not found at $COLLECTOR_SRC/collector/hermes-usage.py (set COLLECTOR_SRC to your omarchy-hermes-usage checkout)"
+[ -f "$COLLECTOR_SRC/hermes-usage-export/quota_io.py" ] || fail "quota_io.py not found at $COLLECTOR_SRC/hermes-usage-export/quota_io.py"
+command -v xcrun >/dev/null 2>&1 || fail "xcrun not found — install Xcode command-line tools"
+command -v python3 >/dev/null 2>&1 || fail "python3 not found"
+[ -d "$INSTALL_DIR" ] || mkdir -p "$INSTALL_DIR" || fail "cannot create install dir $INSTALL_DIR"
+
+# Only remove the build output after every input checked out.
 rm -rf "$SRC/build"
 mkdir -p "$BIN" "$RES/collector" "$RES/hermes-usage-export"
 
@@ -17,9 +39,9 @@ cd "$SRC"
 xcrun swiftc -O -parse-as-library \
   -target arm64-apple-macos13.0 \
   -framework SwiftUI -framework AppKit \
-  HermesUsage.swift -o "$BIN/HermesUsage"
+  HermesUsage.swift HermesUsageApp.swift -o "$BIN/HermesUsage"
 
-echo "==> Packaging collector..."
+echo "==> Packaging collector from $COLLECTOR_SRC..."
 cp "$COLLECTOR_SRC/collector/hermes-usage.py" "$RES/collector/"
 cp "$COLLECTOR_SRC/hermes-usage-export/quota_io.py" "$RES/hermes-usage-export/"
 
@@ -35,7 +57,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key><string>1.0.0</string>
     <key>CFBundleShortVersionString</key><string>1.0.0</string>
     <key>CFBundleExecutable</key><string>HermesUsage</string>
-    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundlePackageType</key><string>APPL</key>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
@@ -70,8 +92,8 @@ echo "==> Verifying..."
 codesign --verify --deep "$APP" && echo "signature OK"
 file "$BIN/HermesUsage"
 
-echo "==> Installing to ~/Applications..."
-mkdir -p ~/Applications
-rm -rf ~/Applications/HermesUsage.app
-cp -R "$APP" ~/Applications/
-echo "Installed: ~/Applications/HermesUsage.app"
+echo "==> Installing to $INSTALL_DIR..."
+rm -rf "$INSTALL_DIR/HermesUsage.app"
+cp -R "$APP" "$INSTALL_DIR/"
+echo "Installed: $INSTALL_DIR/HermesUsage.app"
+echo "NOTE: current target is arm64 (Apple Silicon) only."
