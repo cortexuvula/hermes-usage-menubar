@@ -132,6 +132,242 @@ struct CollectorError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Result of one collector run, decoupled from how it was executed so
+/// lifecycle tests can drive synthetic outcomes (R1/I2).
+struct CollectorOutcome {
+    enum Kind: Equatable {
+        case success(Data)
+        case failure(String)
+    }
+    let kind: Kind
+    /// Wall-clock seconds the child ran (or was allowed to run) — surfaced
+    /// for tests and diagnostics.
+    let elapsed: TimeInterval
+}
+
+/// Clock abstraction so deadline logic is testable without real sleeps (I2).
+protocol DeadlineClock {
+    func now() -> Date
+}
+
+struct SystemDeadlineClock: DeadlineClock {
+    func now() -> Date { Date() }
+}
+
+/// How the collector subprocess is spawned. Production uses /usr/bin/python3;
+/// tests substitute synthetic scripts (R1/I2).
+protocol CollectorExecuting {
+    /// Run the collector with the given timeout and output byte caps.
+    /// Returns a completed outcome — never blocks past `timeout`.
+    func run(timeout: TimeInterval, maxOutputBytes: Int, maxErrorBytes: Int) -> CollectorOutcome
+}
+
+enum CollectorRunner {
+    /// Pipe capacity on macOS is 64 KiB (typically 16 KiB–64 KiB). The
+    /// collector's payload ceiling is 256 KiB — 4x the pipe buffer — so
+    /// waitUntilExit-before-read can deadlock (R1). Reading concurrently
+    /// while the child runs removes the dependency on pipe capacity.
+    static let defaultTimeout: TimeInterval = 30
+    /// Matches the collector's MAX_RECORD_BYTES (256 KiB); anything larger
+    /// means the child misbehaved.
+    static let maxOutputBytes = 512 * 1024
+    /// Matches CappedStderr's budget with headroom for the wrap message.
+    static let maxErrorBytes = 32 * 1024
+
+    static func trim(_ s: String, to limit: Int) -> String {
+        String(s.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Shared outcome classification used by the real executor and tests.
+    static func classify(exitStatus: Int32,
+                          timedOut: Bool,
+                          outputTruncated: Bool,
+                          data: Data,
+                          stderrText: String,
+                          elapsed: TimeInterval) -> CollectorOutcome {
+        if timedOut {
+            return CollectorOutcome(kind: .failure(
+                "Collector timed out after \(Int(elapsed.rounded()))s and was terminated"),
+                elapsed: elapsed)
+        }
+        if exitStatus != 0 {
+            let err = trim(stderrText, to: 300)
+            return CollectorOutcome(kind: .failure(
+                "Collector exit \(exitStatus)\(err.isEmpty ? "" : ": \(err)")"),
+                elapsed: elapsed)
+        }
+        if data.isEmpty {
+            let err = trim(stderrText, to: 300)
+            return CollectorOutcome(kind: .failure(
+                "Collector produced no output\(err.isEmpty ? "" : " (stderr: \(err))")"),
+                elapsed: elapsed)
+        }
+        if outputTruncated {
+            return CollectorOutcome(kind: .failure(
+                "Collector output exceeded \(maxOutputBytes) bytes — refusing to parse a truncated payload"),
+                elapsed: elapsed)
+        }
+        return CollectorOutcome(kind: .success(data), elapsed: elapsed)
+    }
+}
+
+/// Real subprocess executor: drains stdout AND stderr on dedicated threads
+/// while the child runs, enforces a wall-clock deadline, and terminates
+/// (SIGTERM → SIGKILL) an overdue child before reaping it. Cannot deadlock
+/// on pipe backpressure (R1).
+struct PythonCollectorExecutor: CollectorExecuting {
+    let scriptPath: String
+
+    func run(timeout: TimeInterval,
+             maxOutputBytes: Int,
+             maxErrorBytes: Int) -> CollectorOutcome {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        task.arguments = ["-B", scriptPath, "--force"]
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        task.standardOutput = outPipe
+        task.standardError = errPipe
+
+        do {
+            try task.run()
+        } catch {
+            return CollectorOutcome(
+                kind: .failure("Failed to start python3: \(error.localizedDescription)"),
+                elapsed: 0)
+        }
+
+        // Drain both pipes on background threads while the child runs.
+        // Each pipe gets its own thread — this is what breaks the
+        // wait-before-read deadlock: the child can always make write progress.
+        let outReader = PipeReader(handle: outPipe.fileHandleForReading, cap: maxOutputBytes)
+        let errReader = PipeReader(handle: errPipe.fileHandleForReading, cap: maxErrorBytes)
+        let outThread = JoinableThread(name: "collector-stdout") { outReader.drain() }
+        let errThread = JoinableThread(name: "collector-stderr") { errReader.drain() }
+        outThread.start()
+        errThread.start()
+
+        let start = Date()
+        var timedOut = false
+        // Poll with a deadline instead of an unbounded waitUntilExit.
+        while task.isRunning {
+            if Date().timeIntervalSince(start) >= timeout {
+                timedOut = true
+                break
+            }
+            task.waitUntilExit(withTimeout: 0.05)
+        }
+        let elapsed = Date().timeIntervalSince(start)
+
+        if timedOut {
+            task.terminate() // SIGTERM first, gentle shutdown
+            // Give it a moment to exit on SIGTERM, then SIGKILL.
+            let killDeadline = Date().addingTimeInterval(2.0)
+            while task.isRunning && Date() < killDeadline {
+                task.waitUntilExit(withTimeout: 0.05)
+            }
+            if task.isRunning {
+                let force = Process()
+                force.executableURL = URL(fileURLWithPath: "/usr/bin/kill")
+                force.arguments = ["-9", "\(task.processIdentifier)"]
+                try? force.run()
+                // Reap: block until the kernel releases the child.
+                task.waitUntilExit()
+            }
+            // Closing our read ends unblocks the drain threads (they see EOF
+            // or EPIPE) so they finish even if the child never flushes.
+            try? outPipe.fileHandleForReading.close()
+            try? errPipe.fileHandleForReading.close()
+            outThread.join()
+            errThread.join()
+            return CollectorOutcome(kind: .failure(
+                "Collector timed out after \(Int(elapsed.rounded()))s and was terminated"),
+                elapsed: elapsed)
+        }
+
+        // Normal exit: pipes hit EOF on their own; wait for the readers.
+        outThread.join()
+        errThread.join()
+
+        return CollectorRunner.classify(
+            exitStatus: task.terminationStatus,
+            timedOut: false,
+            outputTruncated: outReader.truncated,
+            data: outReader.data,
+            stderrText: String(data: errReader.data, encoding: .utf8) ?? "",
+            elapsed: elapsed)
+    }
+}
+
+/// Minimal joinable thread wrapper — Foundation's Thread gained no join()
+/// API at our deployment target (macOS 13), so block on a semaphore the
+/// body signals when it finishes.
+final class JoinableThread {
+    private let body: () -> Void
+    private let done = DispatchSemaphore(value: 0)
+    private let name: String
+
+    init(name: String, body: @escaping () -> Void) {
+        self.name = name
+        self.body = body
+    }
+
+    func start() {
+        let t = Thread { [body, done] in
+            body()
+            done.signal()
+        }
+        t.name = name
+        t.start()
+    }
+
+    func join() {
+        _ = done.wait(timeout: .now() + 10)
+    }
+}
+
+/// Reads a file handle up to `cap` bytes, recording truncation. Thread-safe
+/// enough for its single-drain-thread use: only the owning thread touches
+/// `data`/`truncated` until `drain()` returns.
+private final class PipeReader {
+    let handle: FileHandle
+    let cap: Int
+    private(set) var data = Data()
+    private(set) var truncated = false
+
+    init(handle: FileHandle, cap: Int) {
+        self.handle = handle
+        self.cap = cap
+    }
+
+    func drain() {
+        while true {
+            let chunk = handle.availableData
+            if chunk.isEmpty { break } // EOF
+            if data.count + chunk.count > cap {
+                let room = max(0, cap - data.count)
+                if room > 0 { data.append(chunk.prefix(room)) }
+                truncated = true
+                // Keep draining without storing so the child never blocks on
+                // us — we must consume the stream to EOF for it to exit.
+                continue
+            }
+            data.append(chunk)
+        }
+    }
+}
+
+extension Process {
+    /// Waits for exit for at most `seconds`; returns without throwing.
+    func waitUntilExit(withTimeout seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while isRunning && Date() < deadline {
+            usleep(10_000) // 10 ms
+        }
+    }
+}
+
+
 @MainActor
 final class UsageModel: ObservableObject {
     /// Distinct lifecycle states (R6). Separate "never loaded" from "failed
@@ -159,8 +395,17 @@ final class UsageModel: ObservableObject {
     @Published var displayTick = 0
 
     private var startedOnce = false
+    /// Executor injected for tests; production resolves from the bundle path
+    /// (R1/I2 — lifecycle tests drive synthetic collectors through this).
+    private let executor: CollectorExecuting
+    private let collectorTimeout: TimeInterval
 
-    init() {
+    init(executor: CollectorExecuting? = nil,
+         collectorTimeout: TimeInterval = CollectorRunner.defaultTimeout) {
+        self.executor = executor ?? PythonCollectorExecutor(
+            scriptPath: Bundle.main.resourceURL!
+                .appendingPathComponent("collector/hermes-usage.py").path)
+        self.collectorTimeout = collectorTimeout
         // Kick off collection immediately at launch, not on first popover open.
         startIfNeeded()
         // R7: start lightweight display clock (60s interval, no collection).
@@ -173,11 +418,6 @@ final class UsageModel: ObservableObject {
         guard !startedOnce else { return }
         startedOnce = true
         start()
-    }
-
-    private var collectorPath: String {
-        Bundle.main.resourceURL!
-            .appendingPathComponent("collector/hermes-usage.py").path
     }
 
     private let refreshInterval: TimeInterval = 900 // 15 min, matches Omarchy default
@@ -221,12 +461,17 @@ final class UsageModel: ObservableObject {
         isLoading = true
         errorText = nil
         loadState = .loading
-        let path = collectorPath
+        let executor = executor
+        let timeout = collectorTimeout
         Task.detached(priority: .utility) {
-            let result = Self.runCollector(path: path)
+            // R1: bounded capture + deadline; the executor always returns.
+            let outcome = executor.run(
+                timeout: timeout,
+                maxOutputBytes: CollectorRunner.maxOutputBytes,
+                maxErrorBytes: CollectorRunner.maxErrorBytes)
             await MainActor.run {
                 self.isLoading = false
-                switch result {
+                switch outcome.kind {
                 case .success(let data):
                     let decoder = JSONDecoder()
                     if let rec = try? decoder.decode(UsageRecord.self, from: data) {
@@ -245,35 +490,13 @@ final class UsageModel: ObservableObject {
                         self.errorText = "Could not parse collector output"
                         self.loadState = self.record != nil ? .stale("Could not parse collector output") : .failed("Could not parse collector output")
                     }
-                case .failure(let err):
+                case .failure(let message):
                     self.isStale = (self.record != nil)
-                    self.errorText = err.localizedDescription
-                    self.loadState = self.record != nil ? .stale(err.localizedDescription) : .failed(err.localizedDescription)
+                    self.errorText = message
+                    self.loadState = self.record != nil ? .stale(message) : .failed(message)
                 }
             }
         }
-    }
-
-    private nonisolated static func runCollector(path: String) -> Result<Data, Error> {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = ["-B", path, "--force"]
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        task.standardOutput = outPipe
-        task.standardError = errPipe
-        do {
-            try task.run()
-        } catch {
-            return .failure(CollectorError(message: "Failed to start python3: \(error.localizedDescription)"))
-        }
-        task.waitUntilExit()
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
-        if task.terminationStatus != 0 {
-            let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            return .failure(CollectorError(message: "Collector exit \(task.terminationStatus): \(err.trimmingCharacters(in: .whitespacesAndNewlines))"))
-        }
-        return .success(data)
     }
 }
 
@@ -754,57 +977,3 @@ extension ModelUsage {
     }
 }
 
-// MARK: - App
-
-@main
-struct HermesUsageApp: App {
-    @StateObject private var model = UsageModel()
-
-    var body: some Scene {
-        MenuBarExtra {
-            ContentView()
-                .environmentObject(model)
-                .onAppear { model.startIfNeeded(); model.refreshIfStale() }
-        } label: {
-            // R7: explicitly observe displayTick to re-render menu bar label
-            let tick = model.displayTick
-            return AnyView(
-            HStack(spacing: 4) {
-                Image(systemName: model.menuBarWarning ? "exclamationmark.triangle.fill" : "chart.bar.fill")
-                Text(statusText)
-                    .font(.system(.body, design: .rounded, weight: .medium))
-                    .monospacedDigit()
-            }
-            .help(menuBarHelp)
-            .accessibilityLabel("Hermes usage: \(statusText) tokens today")
-            .onAppear { _ = tick }
-            )
-        }
-        .menuBarExtraStyle(.window)
-    }
-
-    private var statusText: String {
-        if model.menuBarWarning, let rec = model.record, let t = rec.todayTotalTokens {
-            return "⚠︎ " + compactTokens(Double(t))
-        }
-        if let rec = model.record, let t = rec.todayTotalTokens {
-            return compactTokens(Double(t))
-        }
-        return "…"
-    }
-
-    private var menuBarHelp: String {
-        var parts: [String] = []
-        if let rec = model.record, let t = rec.todayTotalTokens {
-            parts.append("Today: \(exactTokens(Double(t)))")
-        } else {
-            parts.append("Today: —")
-        }
-        parts.append("This Mac · all profiles")
-        if let u = model.updatedAt {
-            parts.append("Updated \(relativeAgeFormatter.localizedString(for: u, relativeTo: Date()))")
-        }
-        parts.append("Estimated, not billed")
-        return parts.joined(separator: " · ")
-    }
-}
