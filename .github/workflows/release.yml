@@ -1,0 +1,204 @@
+name: Release (signed build)
+
+# repo-auditor constraint 1: the release job must NEVER be reachable from a
+# pull_request event, and must share no workflow file with the untrusted
+# PR/push test path (ci.yml has no secrets). Tag push or manual dispatch
+# only — same-repo branch pushes are performed by us, forks cannot reach
+# this workflow, and pull_request is deliberately absent.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      artifact_only:
+        description: "Produce a signed-only test artifact (no notarization, no GitHub release)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  sign-and-verify:
+    name: Signed build + verification evidence
+    # Only trusted runners: no fork PRs can ever reach this job (see trigger).
+    runs-on: macos-latest
+    env:
+      APP_NAME: HermesUsage.app
+      BUNDLE_ID: ca.andrehugo.hermes-usage
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow (icon generation)
+        run: python3 -m pip install pillow
+
+      # ---- Import signing identity into a throwaway keychain -------------
+      # Constraint 2: these steps exist ONLY in this trusted job. ci.yml
+      # never references any signing secret.
+      - name: Import Developer ID certificate
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN=build.keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/$KEYCHAIN"
+          CERT_P12="$RUNNER_TEMP/build_certificate.p12"
+
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_P12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_P12" "$KEYCHAIN_PATH" \
+            -P "$P12_PASSWORD" -A -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Fail loudly if the identity is not actually usable.
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
+          grep -q "1 valid identities found" /tmp/identities.txt \
+            || { echo "::error::expected exactly 1 codesigning identity, got the above"; exit 1; }
+          grep -q "$APPLE_SIGNING_IDENTITY" /tmp/identities.txt \
+            || { echo "::error::expected identity '$APPLE_SIGNING_IDENTITY' not found"; exit 1; }
+          rm -f "$CERT_P12"
+
+      - name: Build with hardened runtime + Developer ID signature
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          COLLECTOR_SRC: ${{ runner.temp }}/.ci-collector
+          HERMES_USAGE_BUILD_DIR: ${{ runner.temp }}/pkg
+          HERMES_USAGE_INSTALL_DIR: ${{ runner.temp }}/apps
+        run: |
+          set -euo pipefail
+          # Stage collector copies outside the workspace (clean-tree rule).
+          mkdir -p "$RUNNER_TEMP/.ci-collector/collector" "$RUNNER_TEMP/.ci-collector/hermes-usage-export"
+          cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py "$RUNNER_TEMP/.ci-collector/collector/"
+          cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py "$RUNNER_TEMP/.ci-collector/hermes-usage-export/"
+
+          # build.sh ad-hoc signs; we overwrite with the real signature
+          # immediately after, then gate on verification of the FINAL
+          # artifact (constraint 4).
+          ./build.sh
+
+          APP="$RUNNER_TEMP/pkg/HermesUsage.app"
+          codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
+            --options runtime --timestamp "$APP"
+
+      # ---- Constraint 3: notarization is a REAL step that fails loudly ----
+      - name: Notarize + staple (requires App Store Connect API key)
+        id: notarize
+        continue-on-error: true
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_ID:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ]; then
+            echo "::error::notarization credentials are NOT configured (need the App Store Connect .p8 key). This build will be a SIGNED-ONLY artifact and MUST NOT be presented as a notarized release."
+            exit 1
+          fi
+          echo "::error::APPLE_API_KEY_ID/ISSUER are set but no .p8 content secret exists yet — notarization cannot proceed with issuer/key-id alone."
+          echo "When the .p8 is available: write it to \$RUNNER_TEMP/AuthKey_\${APPLE_API_KEY_ID}.p8, then:"
+          echo "  xcrun notarytool submit app.zip --key ... --key-id ... --issuer ... --wait"
+          echo "  xcrun stapler staple HermesUsage.app"
+          exit 1
+
+      # ---- Constraint 4: verify the FINAL distributed artifact ------------
+      - name: Verify final artifact (post-sign evidence)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/pkg/HermesUsage.app"
+
+          echo "== codesign --verify --deep --strict =="
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          echo "== embedded signature details =="
+          codesign -dvv "$APP" 2>&1 | tee /tmp/codesign-dvv.txt
+          grep -q "TeamIdentifier=$APPLE_TEAM_ID" /tmp/codesign-dvv.txt \
+            || { echo "::error::TeamIdentifier mismatch"; exit 1; }
+
+          echo "== authority chain =="
+          codesign -d --extract-certificates "$APP" 2>/dev/null || true
+          security find-certificate -a -p "$RUNNER_TEMP/build.keychain" > /tmp/keychain-certs.pem || true
+          # Print the chain from the detached requirements for the record.
+          codesign -d --verbose=4 "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier=" | tee /tmp/chain.txt
+          grep -q "Developer ID Application" /tmp/chain.txt \
+            || { echo "::error::authority chain missing Developer ID Application"; exit 1; }
+          grep -q "Developer ID Certification Authority" /tmp/chain.txt \
+            || { echo "::error::authority chain missing Developer ID CA"; exit 1; }
+
+          echo "== hardening check (runtime flag in code directory) =="
+          codesign -d --verbose=4 "$APP" 2>&1 | grep -q "runtime" \
+            || echo "::warning::runtime flag not reported by codesign -d (check flags=0x10000)"
+
+          echo "== spctl assess =="
+          # Gatekeeper assessment. Signed-but-NOT-notarized is EXPECTED to be
+          # rejected here; we capture the output as evidence and label the
+          # artifact accordingly.
+          set +e
+          spctl -a -vv "$APP" 2>&1 | tee /tmp/spctl.txt
+          SPCTL_RC=${PIPESTATUS[0]}
+          set -e
+          cat /tmp/spctl.txt
+          if [ "$SPCTL_RC" -eq 0 ]; then
+            echo "SPCTL_ASSESS=accepted" >> "$GITHUB_ENV"
+          else
+            echo "SPCTL_ASSESS=rejected" >> "$GITHUB_ENV"
+          fi
+
+      - name: Staple validation (evidence; fails if notarization ran)
+        if: steps.notarize.outcome == 'success'
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/pkg/HermesUsage.app"
+          xcrun stapler validate "$APP"
+          echo "STAPLED=yes" >> "$GITHUB_ENV"
+
+      # ---- Release gate (constraint 3 + 4) ---------------------------------
+      - name: Enforce release gate
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          set -euo pipefail
+          if [ "${SPCTL_ASSESS:-rejected}" != "accepted" ] || [ "${STAPLED:-no}" != "yes" ]; then
+            echo "::error::RELEASE BLOCKED: a tag push demands a notarized + stapled + spctl-accepted artifact. Current: spctl=${SPCTL_ASSESS:-rejected} stapled=${STAPLED:-no}. Produce the .p8 notarization key first."
+            exit 1
+          fi
+          echo "Release gate passed: notarized, stapled, spctl accepted."
+
+      - name: Zip and label artifact
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/pkg"
+          LABEL="signed-only-NOT-NOTARIZED"
+          if [ "${STAPLED:-no}" = "yes" ]; then LABEL="notarized-stapled"; fi
+          ditto -c -k --keepParent HermesUsage.app "HermesUsage-${LABEL}.zip"
+          echo "ARTIFACT_LABEL=$LABEL" >> "$GITHUB_ENV"
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HermesUsage-${{ env.ARTIFACT_LABEL }}
+          path: ${{ runner.temp }}/pkg/HermesUsage-signed-only-NOT-NOTARIZED.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      # NOTE: no release-creation step yet. A GitHub Release requires the
+      # notarization gate above to pass AND explicit authorisation.
+
+      - name: Cleanup keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain" || true
+          rm -f "$RUNNER_TEMP/build_certificate.p12"
