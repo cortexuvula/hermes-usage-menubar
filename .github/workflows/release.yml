@@ -60,13 +60,24 @@ jobs:
 
           echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          # Auto-lock after 6h, no lock on sleep — avoids codesign hanging on
+          # a locked keychain mid-build.
+          security set-keychain-settings -lut 21600 -nc "$KEYCHAIN_PATH" 2>/dev/null || \
+            security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          # APPEND the build keychain to the search list (do NOT replace the
+          # list — replacing it hides login.keychain and makes later security
+          # calls hang waiting on UI that never comes on a headless runner).
+          security list-keychain -d user >> /dev/null
+          CURRENT_LIST=$(security list-keychain -d user | tr -d '"' | tr '\n' ' ')
+          security list-keychain -d user -s $CURRENT_LIST "$KEYCHAIN_PATH"
           security import "$CERT_P12" "$KEYCHAIN_PATH" \
-            -P "$P12_PASSWORD" -A -T /usr/bin/codesign -T /usr/bin/security
+            -P "$P12_PASSWORD" -A -T /usr/bin/codesign
+          # Partition list MUST come after import and must use the keychain
+          # password; run with the keychain as the final arg (partition-list
+          # can block on UI if the keychain is not yet in the search list).
           security set-key-partition-list -S apple-tool:,apple: -s \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
 
           # Fail loudly if the identity is not actually usable.
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
