@@ -20,6 +20,15 @@ RES="$CONTENTS/Resources"
 
 fail() { echo "build.sh: $1" >&2; exit 1; }
 
+# Hard rule (audit rework): never overwrite the live install from a
+# non-default checkout. If the install target is the default ~/Applications
+# AND this script is not running from the canonical checkout location,
+# require an explicit HERMES_USAGE_INSTALL_DIR redirect. This prevents a
+# test harness or foreign clone from clobbering the user's app.
+if [ "$INSTALL_DIR" = "$HOME/Applications" ] && [ "$SRC" != "$HOME/Development/hermes-usage-menubar" ]; then
+  fail "refusing to install to ~/Applications from non-canonical checkout $SRC — set HERMES_USAGE_INSTALL_DIR"
+fi
+
 # ---- Validate all inputs BEFORE removing any output (R4) ----
 [ -f "$SRC/HermesUsage.swift" ] || fail "Swift source not found at $SRC/HermesUsage.swift (set HERMES_USAGE_SRC?)"
 [ -f "$SRC/HermesUsageApp.swift" ] || fail "Swift source not found at $SRC/HermesUsageApp.swift"
@@ -57,7 +66,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <key>CFBundleVersion</key><string>1.0.0</string>
     <key>CFBundleShortVersionString</key><string>1.0.0</string>
     <key>CFBundleExecutable</key><string>HermesUsage</string>
-    <key>CFBundlePackageType</key><string>APPL</key>
+    <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSUIElement</key><true/>
@@ -89,6 +98,10 @@ echo "==> Ad-hoc codesigning..."
 codesign --force --sign - "$APP"
 
 echo "==> Verifying..."
+# Fail the build if the generated plist is malformed or the signature does
+# not verify — a broken bundle must never be installed (R4 rework).
+plutil -lint "$CONTENTS/Info.plist" || fail "generated Info.plist failed plutil -lint"
+codesign --verify --deep --strict "$APP" || fail "codesign --verify --deep --strict failed"
 codesign --verify --deep "$APP" && echo "signature OK"
 file "$BIN/HermesUsage"
 

@@ -33,7 +33,11 @@ jobs:
           mkdir -p .ci-collector/collector .ci-collector/hermes-usage-export
           cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py .ci-collector/collector/
           cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py .ci-collector/hermes-usage-export/
+          # build.sh self-validates: plutil -lint + codesign --deep --strict
+          # fail the run on a malformed bundle (R4 rework).
           ./build.sh
-          codesign --verify --deep build/HermesUsage.app
+          plutil -lint build/HermesUsage.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 build/HermesUsage.app
           test -x build/HermesUsage.app/Contents/MacOS/HermesUsage
-          echo "packaged OK (not installed)"
+          test -d "$RUNNER_TEMP/apps/HermesUsage.app" || { echo "redirected install missing"; exit 1; }
+          echo "packaged + validated OK (not installed to ~/Applications)"
