@@ -1116,6 +1116,8 @@ struct ContentView: View {
                                 .frame(width: 52, alignment: .trailing)
                                 .help(exactTokens(Double(entry.value)))
                         }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(entry.key), \(exactTokens(Double(entry.value)))")
                     }
                 }
                 .font(.caption.weight(.medium))
