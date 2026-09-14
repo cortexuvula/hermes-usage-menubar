@@ -293,6 +293,49 @@ struct I2Tests {
             expect(cost == 0.003, "normalizes empty to local and finds detail cost")
         }
 
+        print("I2/R3: duplicate normalized keys — no crash, conservative nil merge")
+        do {
+            // Two raw keys normalize to the same value: "nous" and " nous " → "nous"
+            // One has a cost, the other is nil → merged must be nil (unknown), not the 0.05.
+            // Before the uniquingKeysWith fix, this would crash with SIGTRAP (exit 133).
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"nous\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"nous\":{\"tokens\":500,\"estimatedUsd\":0.05}," +
+                "\" nous \":{\"tokens\":300,\"estimatedUsd\":null}" +
+                "}}}"
+            ))
+            let cost = resolveProviderCost(rec: rec, providerName: "nous", legacyCost: 0.0)
+            expect(cost == nil, "duplicate normalized keys merge conservatively → nil (not crash)")
+        }
+
+        print("I2/R3: duplicate normalized keys — both agree on cost")
+        do {
+            // Two raw keys normalize to same value, both have same cost → keep it.
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"openrouter\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"openrouter\":{\"tokens\":500,\"estimatedUsd\":0.01}," +
+                "\" openrouter \":{\"tokens\":300,\"estimatedUsd\":0.01}" +
+                "}}}"
+            ))
+            let cost = resolveProviderCost(rec: rec, providerName: "openrouter", legacyCost: 0.0)
+            expect(cost == 0.01, "duplicate keys with matching costs → keep the known cost")
+        }
+
+        print("I2/R3: duplicate normalized keys — costs disagree → nil")
+        do {
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"deepseek\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"deepseek\":{\"tokens\":500,\"estimatedUsd\":0.02}," +
+                "\" deepseek\":{\"tokens\":300,\"estimatedUsd\":0.03}" +
+                "}}}"
+            ))
+            let cost = resolveProviderCost(rec: rec, providerName: "deepseek", legacyCost: 0.0)
+            expect(cost == nil, "duplicate keys with disagreeing costs → nil (conservative)")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)

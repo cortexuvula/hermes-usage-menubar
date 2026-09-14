@@ -145,8 +145,25 @@ func resolveProviderCost(rec: UsageRecord, providerName: String, legacyCost: Dou
         return legacyCost
     }
     // Normalize detail keys to match providerUsage keys.
+    // If two raw keys normalize to the same value, merge conservatively:
+    // any disagreement or any nil → treat as unknown (nil). This preserves
+    // R3's honesty principle: a merged provider must not claim a known cost
+    // it did not observe across all its raw variants.
     let normalized: [String: ProviderDetail] = Dictionary(
-        uniqueKeysWithValues: providers.map { (cleanProvider($0.key), $0.value) }
+        providers.map { (cleanProvider($0.key), $0.value) },
+        uniquingKeysWith: { a, b in
+            // Conservative merge: if either has nil cost, or they disagree, → unknown.
+            guard let costA = a.estimatedUsd, let costB = b.estimatedUsd, costA == costB else {
+                // Return a detail with nil cost to signal unknown.
+                return ProviderDetail(
+                    rows: nil, calls: nil, unknownCallRows: nil,
+                    tokens: nil, reasoning: nil, cacheRead: nil,
+                    estimatedUsd: nil, actualUsd: nil, latestStatusRows: nil
+                )
+            }
+            // Both agree on a known cost — keep the first (they're identical for cost).
+            return a
+        }
     )
     // Detail data exists: a miss means cost was never observed → nil (em-dash).
     // Do NOT fall back to legacy zero — that would mask an unobserved cost.
