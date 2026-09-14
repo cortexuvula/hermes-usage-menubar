@@ -330,6 +330,42 @@ struct I2Tests {
         }
 
         print("")
+        // ---- Accessibility label: day age derivation ----
+        print("I2: accessibility label — day age from updatedAt")
+        do {
+            // Mirror the dayLabel computation from MenuBarLabelView
+            func dayLabel(from t: Date) -> String {
+                let days = Calendar.current.dateComponents([.day], from: t, to: Date()).day ?? 0
+                return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
+            }
+            func dayLabelNoRecord() -> String {
+                return "age unknown"
+            }
+            
+            let now = Date()
+            let label0 = dayLabel(from: now)
+            let label1 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -1, to: now)!)
+            let label2 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -2, to: now)!)
+            let label5 = dayLabel(from: Calendar.current.date(byAdding: .day, value: -5, to: now)!)
+            let labelNone = dayLabelNoRecord()
+            
+            // Basic correctness
+            expect(label0 == "today", "0 days → today")
+            expect(label1 == "yesterday", "1 day → yesterday")
+            expect(label2 == "2 days old", "2 days → 2 days old")
+            expect(label5 == "5 days old", "5 days → 5 days old")
+            expect(labelNone == "age unknown", "no record → age unknown")
+            
+            // Critical: aged records must NOT claim to be current
+            expect(!label2.contains("today"), "2-day-old label must not contain 'today'")
+            expect(!label2.contains("yesterday"), "2-day-old label must not contain 'yesterday'")
+            expect(!label5.contains("today"), "5-day-old label must not contain 'today'")
+            expect(!label5.contains("yesterday"), "5-day-old label must not contain 'yesterday'")
+            expect(!labelNone.contains("today"), "missing record label must not contain 'today'")
+            expect(!labelNone.contains("yesterday"), "missing record label must not contain 'yesterday'")
+        }
+
+        print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }

@@ -129,7 +129,7 @@ let relativeAgeFormatter: RelativeDateTimeFormatter = {
 /// to 32 characters, defaults to 'local'. Used to normalize detail-dictionary
 /// keys so they match the providerUsage keys (R3 key-space mismatch).
 func cleanProvider(_ s: String) -> String {
-    let trimmed = s.trimmingCharacters(in: .whitespaces)
+    let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
     let truncated = String(trimmed.prefix(32))
     return truncated.isEmpty ? "local" : truncated
 }
@@ -153,6 +153,8 @@ func resolveProviderCost(rec: UsageRecord, providerName: String, legacyCost: Dou
         providers.map { (cleanProvider($0.key), $0.value) },
         uniquingKeysWith: { a, b in
             // Conservative merge: if either has nil cost, or they disagree, → unknown.
+            // Note: exact float comparison means near-identical float noise reads as unknown;
+            // this is intentional — ambiguous cost data should display as unknown, not guessed.
             guard let costA = a.estimatedUsd, let costB = b.estimatedUsd, costA == costB else {
                 // Return a detail with nil cost to signal unknown.
                 return ProviderDetail(
