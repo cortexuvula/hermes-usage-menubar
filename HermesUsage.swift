@@ -42,6 +42,23 @@ struct ProviderUsage: Codable {
 struct Details: Codable {
     let totals: Totals?
     let truncated: Bool?
+    /// Per-provider detail buckets with nullable cost fields (R3).
+    /// Keyed by cleaned provider name, matching providerUsage keys.
+    let providers: [String: ProviderDetail]?
+}
+
+/// Mirrors the collector's new_detail_bucket() for per-provider groups.
+/// Nullable fields preserve "not observed" vs "observed zero" (R3).
+struct ProviderDetail: Codable {
+    let rows: Int?
+    let calls: Int?
+    let unknownCallRows: Int?
+    let tokens: Int?
+    let reasoning: Int?
+    let cacheRead: Int?
+    let estimatedUsd: Double?
+    let actualUsd: Double?
+    let latestStatusRows: [String: Int]?
 }
 
 struct Totals: Codable {
@@ -557,22 +574,27 @@ struct ContentView: View {
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 2)
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    let providerName = row.0
+                    let providerUsage = row.1
+                    // R3: prefer detail data (nullable) over legacy field (coerces NULL to 0.0)
+                    let detail = rec.details?.providers?[providerName]
+                    let costUsd = detail?.estimatedUsd ?? providerUsage.estimatedCostUsd
                     HStack {
-                        Text(providerLabel(row.0))
+                        Text(providerLabel(providerName))
                             .font(.caption)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .help(row.0)
+                            .help(providerName)
                         Spacer()
-                        Text(compactCost(row.1.estimatedCostUsd))
+                        Text(compactCost(costUsd))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                             .frame(width: 64, alignment: .trailing)
-                            .help(costHelp(row.1.estimatedCostUsd))
-                        Text(compactTokens(Double(row.1.tokens ?? 0)))
+                            .help(costHelp(costUsd))
+                        Text(compactTokens(Double(providerUsage.tokens ?? 0)))
                             .font(.caption.monospacedDigit())
                             .frame(width: 52, alignment: .trailing)
-                            .help(exactTokens(Double(row.1.tokens ?? 0)))
+                            .help(exactTokens(Double(providerUsage.tokens ?? 0)))
                     }
                     .padding(.vertical, 1)
                 }
