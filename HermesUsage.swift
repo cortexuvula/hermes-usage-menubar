@@ -46,6 +46,10 @@ struct Details: Codable {
     /// Per-provider detail buckets with nullable cost fields (R3).
     /// Keyed by cleaned provider name, matching providerUsage keys.
     let providers: [String: ProviderDetail]?
+    /// B2: Per-task detail buckets. Keys are collector-generated labels
+    /// (e.g., "ordinary", "unknown", "other") or explicit task strings.
+    /// Nullable to handle records from older collectors or missing data.
+    let tasks: [String: ProviderDetail]?
 }
 
 /// Mirrors the collector's new_detail_bucket() for per-provider groups.
@@ -71,6 +75,9 @@ struct Totals: Codable {
     let cacheRead: Int?
     let estimatedUsd: Double?
     let actualUsd: Double?
+    /// B3: Row-status breakdown for accounting evidence.
+    /// Keys: "estimated", "actual", "included", "unknown".
+    let latestStatusRows: [String: Int]?
 }
 
 // MARK: - Formatting helpers
@@ -762,6 +769,7 @@ struct ContentView: View {
                     totalsSection(rec)
                     modelsSection(rec)
                     providersSection(rec)
+                    workloadsSection(rec)
                 }
             }
         }
@@ -1042,12 +1050,112 @@ struct ContentView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+
+            // B3: Accounting evidence disclosure
+            if let totals = rec.details?.totals {
+                DisclosureGroup("How these costs are known") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        if let estimated = totals.estimatedUsd {
+                            Text("Recorded estimate (USD): \(compactCost(estimated))")
+                                .font(.caption2)
+                                .help(formatRecordedCost(estimated))
+                            Text("Sum of provider-reported estimates; costs may be unreported by some providers.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Recorded estimate (USD): unavailable")
+                                .font(.caption2)
+                                .help("Recorded estimate unavailable")
+                        }
+
+                        if let actual = totals.actualUsd {
+                            Text("Recorded actual (USD): \(compactCost(actual))")
+                                .font(.caption2)
+                                .help(formatRecordedCost(actual))
+                            Text("Sum of provider-reported actual costs; not invoice reconciliation.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if totals.estimatedUsd != nil && totals.actualUsd != nil {
+                            Text("⚠️ Estimate and actual are separate facts. Do not sum them.")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+
+                        if let statusBreakdown = formatRowStatusBreakdown(totals.latestStatusRows) {
+                            Text("Row status: \(statusBreakdown)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("Status counts describe observations, not coverage.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+
+                        Text(formatCallAvailability(calls: totals.calls, unknownCallRows: totals.unknownCallRows))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 
     private func costHelp(_ n: Double?) -> String {
         guard let n = n else { return "Cost unavailable; not zero — no estimate reported" }
         return "Recorded estimate: \(compactCost(n)); costs may be unreported by some providers"
+    }
+
+    // MARK: - B3: Accounting evidence helpers
+
+    /// B3: Format recorded cost with status context.
+    /// Shows the value and clarifies it's a database observation, not invoice reconciliation.
+    private func formatRecordedCost(_ n: Double?) -> String {
+        guard let n = n else { return "Recorded cost unavailable" }
+        return "Recorded \(compactCost(n)); this is a database observation, not invoice reconciliation"
+    }
+
+    /// B3: Format row-status breakdown for accounting evidence.
+    /// Returns a human-readable summary of how many rows have each cost status.
+    private func formatRowStatusBreakdown(_ statusRows: [String: Int]?) -> String? {
+        guard let rows = statusRows, !rows.isEmpty else { return nil }
+
+        var parts: [String] = []
+        if let estimated = rows["estimated"], estimated > 0 {
+            parts.append("\(estimated) with estimated cost")
+        }
+        if let actual = rows["actual"], actual > 0 {
+            parts.append("\(actual) with actual cost")
+        }
+        if let included = rows["included"], included > 0 {
+            parts.append("\(included) subscription-included")
+        }
+        if let unknown = rows["unknown"], unknown > 0 {
+            parts.append("\(unknown) with unknown cost status")
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// B3: Format call-availability evidence.
+    /// Distinguishes between total calls and rows with missing call counts.
+    private func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
+        let callsText: String
+        if let calls = calls {
+            callsText = "\(calls) reported calls"
+        } else {
+            callsText = "Calls unavailable"
+        }
+
+        guard let unknown = unknownCallRows, unknown > 0 else {
+            return callsText
+        }
+
+        let plural = unknown == 1 ? "row" : "rows"
+        return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
     }
 
     private func totalChip(_ label: String, _ value: String, help: String) -> some View {
@@ -1180,6 +1288,104 @@ struct ContentView: View {
         } label: {
             Label("Providers (\(total)) — bounded local history", systemImage: "server.rack")
                 .font(.subheadline.weight(.semibold))
+        }
+    }
+
+    // MARK: - B2: Workloads section
+
+    /// B2: Workload/task breakdown section.
+    /// Ranks collector-generated task labels by collected tokens, with calls and
+    /// recorded estimates as secondary columns. Uses collector's labels directly
+    /// (ordinary, unknown, other, or explicit task strings) without inferring
+    /// profiles, doctors, patients, or scheduling status.
+    private func workloadsSection(_ rec: UsageRecord) -> some View {
+        let tasks = sortedTasks(rec)
+        let total = rec.details?.tasks?.count ?? tasks.count
+
+        return DisclosureGroup {
+            if tasks.isEmpty {
+                Text("No workload data")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(tasks, id: \.name) { task in
+                        HStack {
+                            Text(taskLabel(task.name))
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            if let calls = task.calls {
+                                Text("\(calls)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("—")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .help("Calls not recorded")
+                            }
+                            Text(compactTokens(Double(task.tokens)))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            Text(compactCost(task.estimatedUsd))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .help(costHelp(task.estimatedUsd))
+                        }
+                    }
+                }
+
+                if rec.details?.truncated == true {
+                    Text("Partial collection — some workload history may be missing")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.top, 4)
+                }
+            }
+        } label: {
+            Label("Workloads (\(total)) — bounded collected history", systemImage: "list.bullet.rectangle")
+                .font(.subheadline.weight(.semibold))
+        }
+        .help("Task categories recorded by the collector. This is bounded local history, not a complete inventory.")
+    }
+
+    /// B2: Sort tasks by tokens descending, with special ordering for collector-generated labels.
+    private func sortedTasks(_ rec: UsageRecord) -> [(name: String, tokens: Int, calls: Int?, estimatedUsd: Double?)] {
+        guard let tasks = rec.details?.tasks else { return [] }
+
+        // Sort by tokens descending, but ensure "other" and "unknown" appear last
+        let sorted = tasks.sorted { lhs, rhs in
+            let lhsPriority = taskSortPriority(lhs.key)
+            let rhsPriority = taskSortPriority(rhs.key)
+            if lhsPriority != rhsPriority {
+                return lhsPriority < rhsPriority
+            }
+            return (lhs.value.tokens ?? 0) > (rhs.value.tokens ?? 0)
+        }
+
+        return sorted.map { (name: $0.key, tokens: $0.value.tokens ?? 0, calls: $0.value.calls, estimatedUsd: $0.value.estimatedUsd) }
+    }
+
+    /// B2: Priority for task sorting (lower = appears first).
+    /// Collector-generated labels (ordinary, unknown, other) should appear last.
+    private func taskSortPriority(_ name: String) -> Int {
+        switch name {
+        case "other": return 100
+        case "unknown": return 90
+        case "ordinary": return 80
+        default: return 0
+        }
+    }
+
+    /// B2: Format task label for display.
+    /// Collector-generated labels get neutral treatment; explicit task strings pass through.
+    private func taskLabel(_ name: String) -> String {
+        switch name {
+        case "ordinary": return "Ordinary"
+        case "unknown": return "Unknown"
+        case "other": return "Other"
+        default: return name
         }
     }
 
