@@ -89,6 +89,12 @@ let weekdayFormatter: DateFormatter = {
     return f
 }()
 
+let relativeAgeFormatter: RelativeDateTimeFormatter = {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .short
+    return f
+}()
+
 // MARK: - Collector runner
 
 struct CollectorError: LocalizedError {
@@ -131,6 +137,23 @@ final class UsageModel: ObservableObject {
             Task { @MainActor in self?.refresh() }
         }
     }
+
+    /// Refresh on popover open only when the data is stale (failed last time,
+    /// older than the auto interval, or from a previous day).
+    func refreshIfStale() {
+        guard !isLoading else { return }
+        if isStale || isDayStale { refresh(); return }
+        if let t = updatedAt, Date().timeIntervalSince(t) >= refreshInterval { refresh() }
+    }
+
+    /// True when the retained record was collected on a previous calendar day,
+    /// so "today" numbers must not silently be yesterday's.
+    var isDayStale: Bool {
+        guard let t = updatedAt else { return false }
+        return !Calendar.current.isDateInToday(t)
+    }
+
+    var menuBarWarning: Bool { isStale || isDayStale }
 
     func refresh() {
         guard !isLoading else { return }
@@ -193,21 +216,25 @@ struct WeekBars: View {
         max(Double(days.map { $0.messageCount }.max() ?? 0), 1)
     }
 
+    private var todayString: String {
+        dayParser.string(from: Date())
+    }
+
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
-            ForEach(Array(days.enumerated()), id: \.offset) { idx, day in
+            ForEach(Array(days.enumerated()), id: \.offset) { _, day in
                 VStack(spacing: 3) {
                     Text(compactTokens(Double(day.messageCount)))
-                        .font(.caption2.weight(.medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(idx == days.count - 1 ? Color.accentColor : Color.secondary.opacity(0.45))
-                        .frame(height: max(day.messageCount > 0 ? 3 : 0, 44 * Double(day.messageCount) / maxTokens))
-                    Text(weekdayLabel(day.date))
-                        .font(.caption2.weight(idx == days.count - 1 ? .bold : .regular))
-                        .foregroundStyle(idx == days.count - 1 ? Color.primary : Color.secondary)
+                        .fill(fillColor(day))
+                        .frame(height: barHeight(day))
+                    Text(dayLabel(day.date))
+                        .font(.caption.weight(isToday(day.date) ? .bold : .regular))
+                        .foregroundStyle(isToday(day.date) ? Color.primary : Color.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .help(barHelp(day))
@@ -216,7 +243,22 @@ struct WeekBars: View {
         }
     }
 
-    private func weekdayLabel(_ dateStr: String) -> String {
+    private func isToday(_ dateStr: String) -> Bool {
+        dateStr == todayString
+    }
+
+    /// Zero days get a 2pt baseline tick so "zero" reads differently from "no bar".
+    private func barHeight(_ day: RecentDay) -> CGFloat {
+        day.messageCount > 0 ? max(3, 44 * Double(day.messageCount) / maxTokens) : 2
+    }
+
+    private func fillColor(_ day: RecentDay) -> Color {
+        if isToday(day.date) { return Color.accentColor }
+        return day.messageCount > 0 ? Color.secondary.opacity(0.45) : Color.secondary.opacity(0.15)
+    }
+
+    private func dayLabel(_ dateStr: String) -> String {
+        if isToday(dateStr) { return "Today" }
         guard let d = dayParser.date(from: dateStr) else { return "" }
         return weekdayFormatter.string(from: d)
     }
@@ -230,6 +272,7 @@ struct WeekBars: View {
 
 struct ContentView: View {
     @EnvironmentObject var model: UsageModel
+    @State private var showAllModels = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -270,7 +313,7 @@ struct ContentView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
-                Image(systemName: "gauge.with.dots.needle.50percent")
+                Image(systemName: "chart.bar.fill")
                     .foregroundStyle(Color.accentColor)
                 Text("Hermes Agent Usage")
                     .font(.headline)
@@ -303,12 +346,26 @@ struct ContentView: View {
     }
 
     private var emptySection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Label("No local Hermes usage found", systemImage: "questionmark.circle")
                 .font(.callout.weight(.semibold))
-            Text("Run a Hermes session on this Mac, then hit Refresh. The collector checks ~/.hermes/state.db and ~/.hermes/profiles/*/state.db.")
+            Text("Run a Hermes session on this Mac, then hit Refresh.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("~/.hermes/state.db")
+                    Text("~/.hermes/profiles/*/state.db")
+                    Text("Scope: this device, all profiles · read-only")
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 4)
+            } label: {
+                Text("Stores being checked")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(.vertical, 8)
     }
@@ -318,14 +375,20 @@ struct ContentView: View {
             Label("Today — estimated tokens", systemImage: "sun.max")
                 .font(.subheadline.weight(.semibold))
             HStack(spacing: 14) {
-                statCell(label: "Tokens", value: compactTokens(Double(rec.todayTotalTokens ?? 0)))
-                statCell(label: "Prompts", value: rec.todayPrompts.map(String.init) ?? "—")
-                statCell(label: "Sessions", value: rec.todaySessions.map(String.init) ?? "—")
+                statCell(label: "Tokens",
+                         value: compactTokens(Double(rec.todayTotalTokens ?? 0)),
+                         help: rec.todayTotalTokens.map { exactTokens(Double($0)) })
+                statCell(label: "Prompts",
+                         value: rec.todayPrompts.map(String.init) ?? "—",
+                         help: rec.todayPrompts.map { "\($0) prompts" })
+                statCell(label: "Sessions",
+                         value: rec.todaySessions.map(String.init) ?? "—",
+                         help: rec.todaySessions.map { "\($0) sessions" })
             }
         }
     }
 
-    private func statCell(label: String, value: String) -> some View {
+    private func statCell(label: String, value: String, help: String?) -> some View {
         VStack(spacing: 1) {
             Text(value)
                 .font(.system(.title3, design: .rounded).weight(.bold))
@@ -337,6 +400,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
+        .help(help ?? "")
     }
 
     private func weekSection(_ rec: UsageRecord) -> some View {
@@ -358,9 +422,12 @@ struct ContentView: View {
             Label("All-time", systemImage: "clock")
                 .font(.subheadline.weight(.semibold))
             HStack(spacing: 10) {
-                totalChip("Tokens", compactTokens(Double(rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0)))
-                totalChip("Calls", rec.details?.totals?.calls.map(String.init) ?? "—")
-                totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd))
+                let allTokens = rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0
+                totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(Double(allTokens)))
+                totalChip("Calls", rec.details?.totals?.calls.map(String.init) ?? "—",
+                          help: rec.details?.totals?.calls.map { "\($0) calls" } ?? "")
+                totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
+                          help: costHelp(rec.details?.totals?.estimatedUsd))
             }
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
@@ -368,7 +435,12 @@ struct ContentView: View {
         }
     }
 
-    private func totalChip(_ label: String, _ value: String) -> some View {
+    private func costHelp(_ n: Double?) -> String {
+        guard let n = n else { return "Cost not observed" }
+        return "Estimated cost USD \(compactCost(n))"
+    }
+
+    private func totalChip(_ label: String, _ value: String, help: String) -> some View {
         VStack(spacing: 1) {
             Text(value)
                 .font(.system(.callout, design: .rounded).weight(.semibold))
@@ -380,10 +452,11 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 5)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.12)))
+        .help(help)
     }
 
     private func modelsSection(_ rec: UsageRecord) -> some View {
-        let rows = sortedModels(rec)
+        let rows = showAllModels ? allSortedModels(rec) : sortedModels(rec)
         let total = rec.modelUsage?.count ?? rows.count
         return DisclosureGroup {
             if rows.isEmpty {
@@ -406,6 +479,15 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 1)
                 }
+                if total > 8 {
+                    Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
+                        showAllModels.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.top, 2)
+                }
             }
         } label: {
             Label("Models (\(total)) — all time", systemImage: "cpu")
@@ -413,12 +495,14 @@ struct ContentView: View {
         }
     }
 
-    private func sortedModels(_ rec: UsageRecord) -> [(String, Int)] {
+    private func allSortedModels(_ rec: UsageRecord) -> [(String, Int)] {
         guard let m = rec.modelUsage else { return [] }
         return m.map { ($0.key, $0.value.totalTokens) }
             .sorted { $0.1 > $1.1 }
-            .prefix(8)
-            .map { $0 }
+    }
+
+    private func sortedModels(_ rec: UsageRecord) -> [(String, Int)] {
+        Array(allSortedModels(rec).prefix(8))
     }
 
     private func providersSection(_ rec: UsageRecord) -> some View {
@@ -430,6 +514,17 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
+                HStack {
+                    Text("Provider")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Est. USD")
+                        .frame(width: 64, alignment: .trailing)
+                    Text("Tokens")
+                        .frame(width: 52, alignment: .trailing)
+                }
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 2)
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     HStack {
                         Text(providerLabel(row.0))
@@ -441,11 +536,11 @@ struct ContentView: View {
                         Text(compactCost(row.1.estimatedCostUsd))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
-                            .frame(minWidth: 48, alignment: .trailing)
-                            .help(exactTokens(Double(row.1.tokens ?? 0)))
+                            .frame(width: 64, alignment: .trailing)
+                            .help(costHelp(row.1.estimatedCostUsd))
                         Text(compactTokens(Double(row.1.tokens ?? 0)))
                             .font(.caption.monospacedDigit())
-                            .frame(minWidth: 44, alignment: .trailing)
+                            .frame(width: 52, alignment: .trailing)
                             .help(exactTokens(Double(row.1.tokens ?? 0)))
                     }
                     .padding(.vertical, 1)
@@ -489,15 +584,10 @@ struct ContentView: View {
     private var footer: some View {
         HStack {
             if let t = model.updatedAt {
-                if model.isStale {
-                    Text("Last successful update \(t.formatted(date: .omitted, time: .shortened))")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("Updated \(t.formatted(date: .omitted, time: .shortened)) · auto 15 min")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
+                Text(footerAgeText(t))
+                    .font(.caption2)
+                    .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
+                    .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
             } else {
                 Text("—")
                     .font(.caption2)
@@ -507,16 +597,36 @@ struct ContentView: View {
             Button("Refresh") { model.refresh() }
                 .controlSize(.small)
                 .disabled(model.isLoading)
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-                .controlSize(.small)
+                .keyboardShortcut("r", modifiers: .command)
+            Menu {
+                Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
+                    .keyboardShortcut("q")
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More (⌘Q quits)")
         }
         .padding(14)
+    }
+
+    private func footerAgeText(_ t: Date) -> String {
+        if model.isStale {
+            return "Last successful update \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
+        }
+        if model.isDayStale {
+            return "Yesterday's data · \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date()))"
+        }
+        return "Updated \(relativeAgeFormatter.localizedString(for: t, relativeTo: Date())) · auto 15 min"
     }
 }
 
 extension ContentView {
     var startOnAppear: some View {
-        onAppear { model.startIfNeeded() }
+        onAppear { model.startIfNeeded(); model.refreshIfStale() }
     }
 }
 
@@ -536,26 +646,42 @@ struct HermesUsageApp: App {
         MenuBarExtra {
             ContentView()
                 .environmentObject(model)
-                .onAppear { model.startIfNeeded() }
+                .onAppear { model.startIfNeeded(); model.refreshIfStale() }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: model.isStale ? "exclamationmark.triangle.fill" : "gauge.with.dots.needle.50percent")
+                Image(systemName: model.menuBarWarning ? "exclamationmark.triangle.fill" : "chart.bar.fill")
                 Text(statusText)
                     .font(.system(.body, design: .rounded, weight: .medium))
                     .monospacedDigit()
             }
+            .help(menuBarHelp)
             .accessibilityLabel("Hermes usage: \(statusText) tokens today")
         }
         .menuBarExtraStyle(.window)
     }
 
     private var statusText: String {
-        if model.isStale, let rec = model.record, let t = rec.todayTotalTokens {
+        if model.menuBarWarning, let rec = model.record, let t = rec.todayTotalTokens {
             return "⚠︎ " + compactTokens(Double(t))
         }
         if let rec = model.record, let t = rec.todayTotalTokens {
             return compactTokens(Double(t))
         }
         return "…"
+    }
+
+    private var menuBarHelp: String {
+        var parts: [String] = []
+        if let rec = model.record, let t = rec.todayTotalTokens {
+            parts.append("Today: \(exactTokens(Double(t)))")
+        } else {
+            parts.append("Today: —")
+        }
+        parts.append("This Mac · all profiles")
+        if let u = model.updatedAt {
+            parts.append("Updated \(relativeAgeFormatter.localizedString(for: u, relativeTo: Date()))")
+        }
+        parts.append("Estimated, not billed")
+        return parts.joined(separator: " · ")
     }
 }
