@@ -50,6 +50,13 @@ struct Details: Codable {
     /// (e.g., "ordinary", "unknown", "other") or explicit task strings.
     /// Nullable to handle records from older collectors or missing data.
     let tasks: [String: ProviderDetail]?
+    /// B5: Scope and coverage metadata from collector.
+    /// scope: "device" (intended scope, not proven complete coverage)
+    /// coverage: "bounded local history"
+    /// dailyAttribution: description of how daily totals are attributed
+    let scope: String?
+    let coverage: String?
+    let dailyAttribution: String?
 }
 
 /// Mirrors the collector's new_detail_bucket() for per-provider groups.
@@ -104,14 +111,18 @@ func compactCost(_ n: Double?) -> String {
 /// emitted the literal ",.0f tokens" text. Use NumberFormatter for proper
 /// localized grouping.
 func exactTokens(_ n: Double) -> String {
+    "\(tokenCountString(n)) tokens"
+}
+
+/// Plain localized token count without "tokens" suffix, for inline component lists.
+func tokenCountString(_ n: Double) -> String {
     let f = NumberFormatter()
     f.numberStyle = .decimal
     f.maximumFractionDigits = 0
     f.minimumFractionDigits = 0
     f.groupingSeparator = ","
     f.usesGroupingSeparator = true
-    let s = f.string(from: NSNumber(value: n)) ?? String(Int(n))
-    return "\(s) tokens"
+    return f.string(from: NSNumber(value: n)) ?? String(Int(n))
 }
 
 let dayParser: DateFormatter = {
@@ -154,6 +165,42 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
     let startNow = cal.startOfDay(for: now)
     let days = cal.dateComponents([.day], from: startT, to: startNow).day ?? 0
     return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
+}
+
+// MARK: - R4: Snapshot date helpers for receipt
+
+/// R4: Parse ISO 8601 date string to Date
+func parseISODate(_ s: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: s) { return date }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: s)
+}
+
+/// R4: Format snapshot date as "today", "yesterday", or YYYY-MM-DD
+func formatSnapshotDay(_ date: Date) -> String {
+    let cal = Calendar.current
+    if cal.isDateInToday(date) {
+        return "today"
+    } else if cal.isDateInYesterday(date) {
+        return "yesterday"
+    } else {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - B4: Aggregate reasoning helper
+
+/// B4: Returns the aggregate reasoning token count when > 0, else nil.
+/// Used to decide whether to show the "Total reasoning" chip in the totals
+/// section. Never attributed to any specific model — it is a record-level
+/// aggregate only.
+func aggregateReasoning(_ rec: UsageRecord) -> Int? {
+    guard let r = rec.details?.totals?.reasoning, r > 0 else { return nil }
+    return r
 }
 
 // MARK: - F5: Provider cost helpers
@@ -238,6 +285,127 @@ func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
 
     let plural = unknown == 1 ? "row" : "rows"
     return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
+}
+
+// MARK: - B5: Usage receipt formatter
+
+/// B5: Format a plain-text usage receipt for clipboard copy.
+/// Includes: snapshot timestamp, intended scope, coverage qualification,
+/// today's estimate, recorded-history totals, unknown values, data-source explanation.
+/// Excludes: file paths, profile/account identifiers, task labels, raw stderr, session content.
+/// The freshness timestamp is the SNAPSHOT time (updatedAt), never the copy time.
+func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> String {
+    var lines: [String] = []
+
+    // Header
+    lines.append("Hermes Usage Summary")
+    lines.append("")
+
+    // Snapshot timestamp (from collector, not copy time)
+    if let updatedAt = rec.updatedAt {
+        lines.append("Collected: \(updatedAt)")
+    } else {
+        lines.append("Collected: timestamp unavailable")
+    }
+
+    // Intended scope (from details or root)
+    let scope = rec.details?.scope ?? "device"
+    let coverage = rec.details?.coverage ?? "bounded local history"
+    lines.append("Scope: \(scope) (intended, not proven complete)")
+    lines.append("Coverage: \(coverage)")
+
+    // Collection state
+    switch loadState {
+    case .success:
+        if rec.details?.truncated == true {
+            lines.append("Status: partial collection (some data may be missing)")
+        } else {
+            lines.append("Status: complete collection")
+        }
+    case .noData:
+        lines.append("Status: no local data found")
+    case .noStores:
+        lines.append("Status: no session stores found")
+    case .unreadable:
+        lines.append("Status: stores exist but could not be read")
+    case .unrecognized:
+        lines.append("Status: data format not recognized")
+    case .failed:
+        lines.append("Status: collection failed")
+    case .stale:
+        lines.append("Status: showing previous data (refresh failed)")
+    case .initial, .loading:
+        lines.append("Status: not yet collected")
+    }
+
+    lines.append("")
+
+    // R4: Daily estimate qualified by snapshot date, not copy-time "Today"
+    let snapshotDayLabel = rec.updatedAt.flatMap { parseISODate($0) }.map { formatSnapshotDay($0) } ?? "snapshot day"
+    if let todayTokens = rec.todayTotalTokens {
+        lines.append("Daily estimate (\(snapshotDayLabel)): \(exactTokens(Double(todayTokens))) (estimated)")
+    } else {
+        lines.append("Daily estimate (\(snapshotDayLabel)): unavailable")
+    }
+
+    // Recorded history totals
+    if let totals = rec.details?.totals {
+        if let tokens = totals.tokens {
+            lines.append("Recorded history: \(exactTokens(Double(tokens)))")
+        } else {
+            lines.append("Recorded history: unavailable")
+        }
+
+        if let calls = totals.calls {
+            let unknownText = totals.unknownCallRows.map { " (call count unavailable for \($0) rows)" } ?? ""
+            lines.append("Reported calls: \(calls)\(unknownText)")
+        } else {
+            lines.append("Reported calls: unavailable")
+        }
+
+        if let estUsd = totals.estimatedUsd {
+            lines.append("Estimated cost: \(compactCost(estUsd)) (not invoice reconciliation)")
+        } else {
+            lines.append("Estimated cost: unavailable")
+        }
+
+        if let actualUsd = totals.actualUsd {
+            lines.append("Actual cost: \(compactCost(actualUsd)) (database observation)")
+        }
+    } else {
+        lines.append("Recorded history: unavailable")
+        lines.append("Reported calls: unavailable")
+        lines.append("Estimated cost: unavailable")
+    }
+
+    lines.append("")
+
+    // Provider summary (aggregate only, no identifiers)
+    if let providers = rec.providerUsage, !providers.isEmpty {
+        let count = providers.count
+        let plural = count == 1 ? "provider" : "providers"
+        lines.append("Providers: \(count) \(plural)")
+    }
+
+    // Model summary (aggregate only)
+    if let models = rec.modelUsage, !models.isEmpty {
+        let count = models.count
+        let plural = count == 1 ? "model" : "models"
+        lines.append("Models: \(count) \(plural)")
+    }
+
+    lines.append("")
+
+    // Data source explanation
+    if let attribution = rec.details?.dailyAttribution {
+        lines.append("Daily attribution: \(attribution)")
+    }
+    lines.append("Source: local Hermes Agent session stores on this Mac")
+    lines.append("")
+    lines.append("This is bounded local history, not a complete inventory.")
+    lines.append("Costs are database observations, not billing statements.")
+
+    return lines.joined(separator: "\n")
 }
 
 /// F3: Format explicit accessibility summary for a workload row.
@@ -842,6 +1010,9 @@ struct WeekBars: View {
 struct ContentView: View {
     @EnvironmentObject var model: UsageModel
     @State private var showAllModels = false
+    @State private var clipboardCopied = false
+    @State private var clipboardError: String?
+    @State private var feedbackTimer: DispatchWorkItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1182,6 +1353,24 @@ struct ContentView: View {
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
             }
+            // R2: Total reasoning on its own full-width row below the 3-chip HStack
+            if let reasoning = aggregateReasoning(rec) {
+                HStack {
+                    Text("Total reasoning")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(tokenCountString(Double(reasoning)))
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+                .help("\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Total reasoning \(tokenCountString(Double(reasoning)))")
+            }
             // F6: qualified call-coverage warning matching the disclosure wording
             if unknownCalls > 0 {
                 Text(formatCallCoverageWarning(unknownCallRows: unknownCalls))
@@ -1285,19 +1474,52 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack {
-                        Text(shortName(row.0))
-                            .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(row.0)
-                        Spacer()
-                        Text(compactTokens(Double(row.1)))
-                            .font(.caption.monospacedDigit())
+                    let (modelName, totalTokens) = row
+                    let mu = rec.modelUsage?[modelName]
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(shortName(modelName))
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(modelName)
+                            Spacer()
+                            Text(compactTokens(Double(totalTokens)))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .help(exactTokens(Double(totalTokens)))
+                        }
+                        if let mu = mu {
+                            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                GridRow {
+                                    HStack(spacing: 4) {
+                                        Text("In:")
+                                        Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                    }
+                                    HStack(spacing: 4) {
+                                        Text("Out:")
+                                        Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                    }
+                                }
+                                GridRow {
+                                    HStack(spacing: 4) {
+                                        Text("Cache read:")
+                                        Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                    }
+                                    HStack(spacing: 4) {
+                                        Text("Cache write:")
+                                        Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                            .help("Token components: some stores or providers may not record every component")
+                                    }
+                                }
+                            }
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .help(exactTokens(Double(row.1)))
+                        }
                     }
                     .padding(.vertical, 1)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!) : "\(modelName), \(exactTokens(Double(totalTokens)))")
                 }
                 if total > 8 {
                     Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
@@ -1530,34 +1752,90 @@ struct ContentView: View {
     private var footer: some View {
         // R7: explicitly observe displayTick to re-render time-dependent UI
         let tick = model.displayTick
+        let hasFeedback = clipboardCopied || clipboardError != nil
         return AnyView(
-        HStack {
-            if let t = model.updatedAt {
-                Text(footerAgeText(t))
+        VStack(spacing: 2) {
+            // R3: reserved feedback row above the timestamp — no overlay
+            if clipboardCopied {
+                Text("✓ Copied to clipboard")
                     .font(.caption2)
-                    .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
-                    .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
-            } else {
-                Text("—")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Copied to clipboard")
+            } else if let error = clipboardError {
+                Text(error)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.red)
+                    .accessibilityLabel(error)
             }
-            Spacer()
-            Button("Refresh") { model.refresh() }
-                .controlSize(.small)
-                .disabled(model.isLoading)
-                .keyboardShortcut("r", modifiers: .command)
-            Menu {
-                Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
-                    .keyboardShortcut("q")
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
+            HStack {
+                if !hasFeedback {
+                    if let t = model.updatedAt {
+                        Text(footerAgeText(t))
+                            .font(.caption2)
+                            .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
+                            .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
+                    } else {
+                        Text("—")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer()
+                Button("Refresh") { model.refresh() }
+                    .controlSize(.small)
+                    .disabled(model.isLoading)
+                    .keyboardShortcut("r", modifiers: .command)
+                Menu {
+                    Button("Copy usage summary") {
+                        // Cancel any pending feedback timer
+                        feedbackTimer?.cancel()
+                    
+                        if let rec = model.record {
+                            let receipt = formatUsageReceipt(rec, loadState: model.loadState)
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            if pasteboard.setString(receipt, forType: .string) {
+                                // Success: clear error, set success, schedule timer
+                                clipboardError = nil
+                                clipboardCopied = true
+                                let timer = DispatchWorkItem {
+                                    clipboardCopied = false
+                                }
+                                feedbackTimer = timer
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: timer)
+                            } else {
+                                // Failure: clear success, set error, schedule timer
+                                clipboardCopied = false
+                                clipboardError = "Failed to write to clipboard"
+                                let timer = DispatchWorkItem {
+                                    clipboardError = nil
+                                }
+                                feedbackTimer = timer
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timer)
+                            }
+                        } else {
+                            // No data: clear success, set error, schedule timer
+                            clipboardCopied = false
+                            clipboardError = "No usage data to copy"
+                            let timer = DispatchWorkItem {
+                                clipboardError = nil
+                            }
+                            feedbackTimer = timer
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timer)
+                        }
+                    }
+                    .disabled(model.record == nil)
+                    Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
+                        .keyboardShortcut("q")
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More (copy summary or quit)")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More (⌘Q quits)")
         }
         .padding(14)
         .onAppear { _ = tick }  // R7: bind observation
@@ -1593,5 +1871,43 @@ extension ModelUsage {
     var totalTokens: Int {
         (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
     }
+}
+
+// MARK: - B4: Token makeup
+
+/// B4: Format token-component summary for a model row.
+/// Components: input, output, cache-read, cache-write.
+/// Reasoning is appended only when explicitly supplied (never added to the four-component sum).
+/// Zero values are displayed as "0" (collector clamps missing to zero, so we cannot distinguish).
+func formatTokenComponents(_ mu: ModelUsage, reasoning: Int? = nil) -> String {
+    let input = mu.inputTokens ?? 0
+    let output = mu.outputTokens ?? 0
+    let cacheRead = mu.cacheReadInputTokens ?? 0
+    let cacheWrite = mu.cacheCreationInputTokens ?? 0
+    var parts = [
+        "In: \(tokenCountString(Double(input)))",
+        "Out: \(tokenCountString(Double(output)))",
+        "Cache read: \(tokenCountString(Double(cacheRead)))",
+        "Cache write: \(tokenCountString(Double(cacheWrite)))"
+    ]
+    if let r = reasoning, r > 0 {
+        parts.append("Reasoning: \(tokenCountString(Double(r)))")
+    }
+    return parts.joined(separator: " · ")
+}
+
+/// B4: Build accessibility label for a model row with token components.
+func formatModelAccessibilityLabel(modelName: String, mu: ModelUsage, reasoning: Int? = nil) -> String {
+    let total = mu.totalTokens
+    var label = "\(modelName), \(tokenCountString(Double(total))) total"
+    let input = mu.inputTokens ?? 0
+    let output = mu.outputTokens ?? 0
+    let cacheRead = mu.cacheReadInputTokens ?? 0
+    let cacheWrite = mu.cacheCreationInputTokens ?? 0
+    label += ". Input \(tokenCountString(Double(input))), Output \(tokenCountString(Double(output))), Cache read \(tokenCountString(Double(cacheRead))), Cache write \(tokenCountString(Double(cacheWrite)))"
+    if let r = reasoning, r > 0 {
+        label += ", Reasoning \(tokenCountString(Double(r)))"
+    }
+    return label
 }
 

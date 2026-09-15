@@ -832,6 +832,197 @@ struct I2Tests {
             expect(explicit.contains("dr-smith-followup"), "explicit task name passes through")
         }
 
+        // B4: formatTokenComponents and accessibility label
+        print("B4: token component breakdown and accessibility")
+        do {
+            let full = ModelUsage(inputTokens: 1000, outputTokens: 500, cacheReadInputTokens: 200, cacheCreationInputTokens: 100)
+            let breakdown = formatTokenComponents(full)
+            expect(breakdown == "In: 1,000 · Out: 500 · Cache read: 200 · Cache write: 100",
+                   "all components present → '\(breakdown)'")
+            
+            let axLabel = formatModelAccessibilityLabel(modelName: "gpt-4", mu: full)
+            expect(axLabel.contains("gpt-4") && axLabel.contains("1,800 total"),
+                   "accessibility label includes model and total → '\(axLabel)'")
+            expect(axLabel.contains("Input 1,000") && axLabel.contains("Output 500"),
+                   "accessibility label includes components")
+            
+            let withZeros = ModelUsage(inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
+            let zerosBreakdown = formatTokenComponents(withZeros)
+            expect(zerosBreakdown.contains("Cache read: 0") && zerosBreakdown.contains("Cache write: 0"),
+                   "zero components still shown → '\(zerosBreakdown)'")
+            
+            let partial = ModelUsage(inputTokens: 100, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
+            let partialBreakdown = formatTokenComponents(partial)
+            expect(partialBreakdown.contains("In: 100") && partialBreakdown.contains("Out: 0"),
+                   "missing output treated as zero → '\(partialBreakdown)'")
+            
+            let allNil = ModelUsage(inputTokens: nil, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
+            let nilBreakdown = formatTokenComponents(allNil)
+            expect(nilBreakdown == "In: 0 · Out: 0 · Cache read: 0 · Cache write: 0",
+                   "all nil → '\(nilBreakdown)'")
+            
+            let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)
+            expect(nilAxLabel.contains("0 total"),
+                   "accessibility label for all-nil → '\(nilAxLabel)'")
+            
+            // aggregateReasoning helper
+            let withReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"reasoning\":12345}}}"))
+            expect(aggregateReasoning(withReasoning) == 12345,
+                   "aggregateReasoning: > 0 yields the value → \(aggregateReasoning(withReasoning) ?? -1)")
+            
+            let zeroReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"reasoning\":0}}}"))
+            expect(aggregateReasoning(zeroReasoning) == nil,
+                   "aggregateReasoning: 0 yields nil → \(String(describing: aggregateReasoning(zeroReasoning)))")
+            
+            let missingReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"tokens\":1000}}}"))
+            expect(aggregateReasoning(missingReasoning) == nil,
+                   "aggregateReasoning: missing yields nil → \(String(describing: aggregateReasoning(missingReasoning)))")
+        }
+
+        // B5: formatUsageReceipt
+        print("B5: usage receipt formatter")
+        do {
+            let fullRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"updatedAt\":\"2026-09-14T12:00:00Z\",\"todayTotalTokens\":50000," +
+                "\"details\":{\"scope\":\"all profiles\",\"coverage\":\"bounded local history\"," +
+                "\"dailyAttribution\":\"last 7 days\"," +
+                "\"totals\":{\"tokens\":1000000,\"calls\":500,\"estimatedUsd\":2.50}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":500000},\"openai\":{\"tokens\":500000}}}"))
+            
+            let receipt = formatUsageReceipt(fullRec, loadState: .success)
+            expect(receipt.contains("Hermes Usage Summary"), "receipt has header")
+            expect(receipt.contains("2026-09-14"), "receipt has snapshot timestamp")
+            expect(receipt.contains("all profiles") && receipt.contains("intended, not proven complete"),
+                   "receipt has scope with qualifier")
+            expect(receipt.contains("bounded local history"), "receipt has coverage")
+            expect(receipt.contains("50,000") && receipt.contains("estimated"),
+                   "receipt has today's estimate")
+            expect(receipt.contains("1,000,000"), "receipt has recorded history")
+            expect(receipt.contains("Reported calls: 500"), "receipt has calls")
+            expect(receipt.contains("$2.50") && receipt.contains("not invoice reconciliation"),
+                   "receipt has cost with qualifier")
+            expect(receipt.contains("2 providers"), "receipt has provider count")
+            expect(receipt.contains("last 7 days"), "receipt has daily attribution")
+            expect(receipt.contains("local Hermes Agent session stores"), "receipt has data source")
+            expect(!receipt.contains("/Users/") && !receipt.contains("account") && !receipt.contains("stderr"),
+                   "receipt excludes sensitive paths/identifiers")
+            
+            // Verify failure states don't leak diagnostic details (paths, stderr, etc.)
+            let pathLikeDiagnostic = "/Users/test/.local/share/hermes/session-store.db"
+            let stderrLikeDiagnostic = "error: failed to open /var/log/hermes.log: Permission denied"
+            
+            let emptyRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
+            
+            let noStoresReceipt = formatUsageReceipt(emptyRec, loadState: .noStores(pathLikeDiagnostic))
+            expect(noStoresReceipt.contains("no session stores found"), "noStores: status line present")
+            expect(!noStoresReceipt.contains("/Users/") && !noStoresReceipt.contains(".db"),
+                   "noStores: excludes path details")
+            
+            let unreadableReceipt = formatUsageReceipt(emptyRec, loadState: .unreadable(stderrLikeDiagnostic))
+            expect(unreadableReceipt.contains("could not be read"), "unreadable: status line present")
+            expect(!unreadableReceipt.contains("/var/log") && !unreadableReceipt.contains("Permission denied"),
+                   "unreadable: excludes stderr details")
+            
+            let unrecognizedReceipt = formatUsageReceipt(emptyRec, loadState: .unrecognized("unknown format at /tmp/data.json"))
+            expect(unrecognizedReceipt.contains("data format not recognized"), "unrecognized: status line present")
+            expect(!unrecognizedReceipt.contains("/tmp/") && !unrecognizedReceipt.contains(".json"),
+                   "unrecognized: excludes path details")
+            
+            let failedReceipt = formatUsageReceipt(emptyRec, loadState: .failed("exit code 1, stderr: \(stderrLikeDiagnostic)"))
+            expect(failedReceipt.contains("collection failed"), "failed: status line present")
+            expect(!failedReceipt.contains("/var/log") && !failedReceipt.contains("Permission denied") && !failedReceipt.contains("stderr"),
+                   "failed: excludes stderr and path details")
+            
+            let staleRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"updatedAt\":\"2026-09-13T10:00:00Z\"}"))
+            
+            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("refresh failed: \(pathLikeDiagnostic)"))
+            expect(staleReceipt.contains("showing previous data"), "stale: status line present")
+            expect(!staleReceipt.contains("/Users/") && !staleReceipt.contains("test"),
+                   "stale: excludes path details")
+            
+            let noDataRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
+            
+            let noDataReceipt = formatUsageReceipt(noDataRec, loadState: .noData)
+            expect(noDataReceipt.contains("no local data found"),
+                   "no-data state reflected → '\(noDataReceipt.prefix(100))'")
+        }
+
+        // B5: stale receipt retains prior snapshot and leaks no diagnostic (model-level)
+        print("B5: stale receipt retains prior snapshot and leaks no diagnostic (model-level)")
+        do {
+            let canaryMarker = "CANARY-XYZ-789"
+            let syntheticPath = "/Users/synthetic-abc123/.hermes/session-store.db"
+            let failingDiagnostic = "hermes-usage: no Hermes Agent session store found (looked in \(syntheticPath)) — \(canaryMarker)"
+            
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                        "\"updatedAt\":\"2026-09-14T08:30:00Z\",\"todayTotalTokens\":42000," +
+                        "\"details\":{\"scope\":\"device\",\"coverage\":\"full\",\"dailyAttribution\":\"7-day\"," +
+                        "\"totals\":{\"tokens\":150000,\"calls\":300,\"estimatedUsd\":1.25}," +
+                        "\"truncated\":false}," +
+                        "\"modelUsage\":{\"gpt-4\":{\"inputTokens\":50000,\"outputTokens\":25000,\"cacheReadInputTokens\":0,\"cacheCreationInputTokens\":0}}," +
+                        "\"providerUsage\":{\"openai\":{\"estimatedCostUsd\":1.25}}}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .failure(failingDiagnostic), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            
+            // First refresh: success
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first load succeeded")
+            expect(m.record?.todayTotalTokens == 42000, "first record has tokens")
+            let firstUpdatedAt = m.record?.updatedAt
+            expect(firstUpdatedAt != nil, "first record has updatedAt")
+            
+            // Second refresh: failure
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            
+            // Model retains previous record
+            expect(m.isStale, "model is stale after failed refresh")
+            expect(m.record != nil, "record retained after failure")
+            expect(m.record?.todayTotalTokens == 42000, "retained record has original tokens")
+            expect(m.record?.updatedAt == firstUpdatedAt, "retained record has original updatedAt")
+            
+            // Format receipt from stale state
+            let receipt = formatUsageReceipt(m.record!, loadState: m.loadState)
+            
+            // (a) names the stale condition
+            expect(receipt.contains("showing previous data"),
+                   "stale: receipt names stale condition → '\(receipt)'")
+            
+            // (b) retains prior snapshot's token values
+            expect(receipt.contains("42,000"), "stale: retains token count")
+            expect(receipt.contains("150,000"), "stale: retains total tokens")
+            expect(receipt.contains("Reported calls: 300"), "stale: retains call count")
+            
+            // (c) keeps SNAPSHOT timestamp, not current time
+            expect(receipt.contains("2026-09-14"), "stale: retains snapshot date")
+            expect(!receipt.contains("now") && !receipt.contains("current time"),
+                   "stale: does not substitute current time")
+            
+            // (d) diagnostic, path, canary appear NOWHERE
+            expect(!receipt.contains(syntheticPath),
+                   "stale: excludes synthetic path → path=\(syntheticPath)")
+            expect(!receipt.contains(canaryMarker),
+                   "stale: excludes canary marker → canary=\(canaryMarker)")
+            expect(!receipt.contains("looked in"), "stale: excludes diagnostic phrasing")
+            expect(!receipt.contains("synthetic-abc123"), "stale: excludes path components")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
