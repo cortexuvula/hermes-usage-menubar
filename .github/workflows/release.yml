@@ -54,11 +54,14 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
+          set -x  # every command echoed: a hang is diagnosable from the log
           KEYCHAIN=build.keychain
           KEYCHAIN_PATH="$RUNNER_TEMP/$KEYCHAIN"
           CERT_P12="$RUNNER_TEMP/build_certificate.p12"
 
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o "$CERT_P12"
+          # BSD base64 (macOS) has no -o; decode to stdout and redirect.
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERT_P12"
+          ls -la "$CERT_P12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           # Auto-lock after 6h, no lock on sleep — avoids codesign hanging on
           # a locked keychain mid-build.
