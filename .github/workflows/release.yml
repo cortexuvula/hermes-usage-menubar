@@ -77,24 +77,31 @@ jobs:
           # provider. The macOS SYSTEM /usr/bin/openssl is LibreSSL, which
           # reads legacy P12s natively — prefer it; fall back to
           # 'openssl -legacy' if the system binary is unavailable.
+          # Passwords reach openssl via file descriptors (passin/passout fd:),
+          # not argv — argv is ps-visible during the process window. The
+          # security(1) calls below have no stdin/fd form and stay as-is.
           OSSL=/usr/bin/openssl
-          if ! "$OSSL" pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
-              -nokeys -nocerts -info >/dev/null 2>/tmp/openssl-probe.log; then
+          if ! "$OSSL" pkcs12 -in "$CERT_P12" -passin fd:3 \
+              -nokeys -nocerts -info >/dev/null 2>/tmp/openssl-probe.log \
+              3< <(printf '%s' "$P12_PASSWORD"); then
             echo "system openssl probe failed; trying openssl -legacy"
             cat /tmp/openssl-probe.log
             OSSL="openssl -legacy"
           fi
-          $OSSL pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
-            -passout pass:"$KEYCHAIN_PASSWORD" \
+          $OSSL pkcs12 -in "$CERT_P12" -passin fd:3 -passout fd:4 \
             -out "$RUNNER_TEMP/combined.pem" 2>/tmp/openssl.log \
+            3< <(printf '%s' "$P12_PASSWORD") \
+            4< <(printf '%s' "$KEYCHAIN_PASSWORD") \
             || { echo "::error::openssl pkcs12 extraction failed:"; cat /tmp/openssl.log; exit 1; }
-          $OSSL pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
+          $OSSL pkcs12 -in "$CERT_P12" -passin fd:3 \
             -nokeys -out "$RUNNER_TEMP/cert.pem" 2>>/tmp/openssl.log \
+            3< <(printf '%s' "$P12_PASSWORD") \
             || { echo "::error::openssl cert extraction failed:"; cat /tmp/openssl.log; exit 1; }
           # Key alone: -nocerts avoids the duplicate-cert collision entirely.
-          $OSSL pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
-            -nocerts -passout pass:"$KEYCHAIN_PASSWORD" \
-            -out "$RUNNER_TEMP/key.pem" 2>>/tmp/openssl.log \
+          $OSSL pkcs12 -in "$CERT_P12" -passin fd:3 -passout fd:4 \
+            -nocerts -out "$RUNNER_TEMP/key.pem" 2>>/tmp/openssl.log \
+            3< <(printf '%s' "$P12_PASSWORD") \
+            4< <(printf '%s' "$KEYCHAIN_PASSWORD") \
             || { echo "::error::openssl key extraction failed:"; cat /tmp/openssl.log; exit 1; }
           ls -la "$RUNNER_TEMP"/*.pem
           # Import certificates first, then the key from the combined PEM.
@@ -191,10 +198,18 @@ jobs:
               --key "$KEYFILE" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
             rm -f "$KEYFILE"
           else
-            # Apple-ID + app-specific password route (active today).
-            xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
+            # Apple-ID route (active today). The app-specific password is
+            # passed via the NOTARYTOOL_PASSWORD env var and stashed once
+            # into a keychain profile, so neither submit nor store carries
+            # it as a ps-visible argv.
+            export NOTARYTOOL_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD"
+            xcrun notarytool store-credentials HERMES_NOTARY \
               --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-              --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+              --keychain "$RUNNER_TEMP/build.keychain" --force
+            unset NOTARYTOOL_PASSWORD
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
+              --keychain-profile HERMES_NOTARY \
+              --keychain "$RUNNER_TEMP/build.keychain" --wait
           fi
 
           xcrun stapler staple "$APP"
@@ -247,6 +262,11 @@ jobs:
           # Gatekeeper assessment. Signed-but-NOT-notarized is EXPECTED to be
           # rejected here; we capture the output as evidence and label the
           # artifact accordingly.
+          # NOTE: spctl assesses the STAPLED ticket when one is present
+          # ("source=Notarized Developer ID" requires it). Running spctl
+          # BEFORE the separate stapler-validate step is intentional: each
+          # independently proves the final artifact — Gatekeeper's verdict
+          # and the staple's own validity check. Don't reorder.
           set +e
           spctl -a -vv "$APP" 2>&1 | tee /tmp/spctl.txt
           SPCTL_RC=${PIPESTATUS[0]}
