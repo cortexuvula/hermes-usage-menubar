@@ -74,12 +74,27 @@ jobs:
           security list-keychain -d user >> /dev/null
           CURRENT_LIST=$(security list-keychain -d user | tr -d '"' | tr '\n' ' ')
           security list-keychain -d user -s $CURRENT_LIST "$KEYCHAIN_PATH"
-          # NOTE: no -A. On current macOS runners, importing with -A ("allow
-          # all apps") blocks indefinitely waiting for a UI confirmation a
-          # headless session can never provide — observed hanging 15+ min.
-          # Grant codesign alone via -T and rely on the partition list.
+          # NOTE: no -A (allow-all triggers UI on headless runners). stdin is
+          # closed so a password/retry prompt fails FAST instead of hanging;
+          # a watchdog bounds the import and dumps diagnostics if it stalls.
           security import "$CERT_P12" "$KEYCHAIN_PATH" \
-            -P "$P12_PASSWORD" -T /usr/bin/codesign
+            -P "$P12_PASSWORD" -T /usr/bin/codesign \
+            < /dev/null > /tmp/import.log 2>&1 &
+          IMPORT_PID=$!
+          for i in $(seq 1 60); do
+            kill -0 "$IMPORT_PID" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$IMPORT_PID" 2>/dev/null; then
+            echo "::error::security import stalled (>60s). Diagnostics:"
+            cat /tmp/import.log
+            echo "--- file type:"; file "$CERT_P12"
+            echo "--- p12 size:"; stat -f%z "$CERT_P12"
+            echo "--- openssl check:"; openssl pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" -nokeys -info 2>&1 | head -10
+            kill -9 "$IMPORT_PID" 2>/dev/null || true
+            exit 1
+          fi
+          wait "$IMPORT_PID"
           # Partition list MUST come after import and must use the keychain
           # password; run with the keychain as the final arg (partition-list
           # can block on UI if the keychain is not yet in the search list).
