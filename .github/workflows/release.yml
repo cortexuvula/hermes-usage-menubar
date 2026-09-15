@@ -335,8 +335,20 @@ jobs:
           set -euo pipefail
           # --verify-tag only proves the tag exists remotely; provenance needs
           # the remote tag to resolve to the exact commit this run checked out
-          # and built (guards against a force-moved tag).
-          REMOTE_SHA=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          # and built (guards against a force-moved tag). Annotated tags
+          # advertise a tag-OBJECT sha on the direct ref, so query the peeled
+          # entry too and prefer it; lightweight tags have no peeled entry and
+          # the direct ref IS the commit. Verified against this repo's live
+          # remote: annotated v1.0.0 (3255a115 tag-obj -> a49d99d1 commit),
+          # lightweight scratch tag (direct == commit), missing (empty),
+          # moved (differs -> mismatch fires).
+          DIRECT_SHA=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          if [ -z "$DIRECT_SHA" ]; then
+            echo "::error::tag refs/tags/$TAG not found on remote"
+            exit 1
+          fi
+          PEELED_SHA=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
+          REMOTE_SHA="${PEELED_SHA:-$DIRECT_SHA}"
           if [ "$REMOTE_SHA" != "$GITHUB_SHA" ]; then
             echo "::error::tag/HEAD provenance mismatch: remote tag=$REMOTE_SHA build=$GITHUB_SHA"
             exit 1
