@@ -106,13 +106,9 @@ func compactCost(_ n: Double?) -> String {
 }
 
 /// Exact localized count for hover help / accessibility, e.g. "3,234,511 tokens".
-/// R8: String(format: "%,.0f tokens", n) is not a valid printf conversion —
-/// Swift's printf does not support the thousands-separator flag, so it
-/// emitted the literal ",.0f tokens" text. Use NumberFormatter for proper
-/// localized grouping.
-func exactTokens(_ n: Double) -> String {
-    "\(tokenCountString(n)) tokens"
-}
+/// Integer-only: no Double overload exists. The NumberFormatter-based Double
+/// path was removed because it rounds at ≥2^54 — all integral counts must
+/// go through the Int overload below.
 
 /// Plain localized token count without "tokens" suffix, for inline component lists.
 ///
@@ -138,19 +134,6 @@ func tokenCountString(_ n: Int) -> String {
         inserted += 1
     }
     return String(grouped.reversed())
-}
-
-/// Double entry point retained for genuinely fractional callers only.
-/// Integral values MUST use the Int overload above — this path rounds
-/// at ≥2^54 (see tokenCountString(_: Int)).
-func tokenCountString(_ n: Double) -> String {
-    let f = NumberFormatter()
-    f.numberStyle = .decimal
-    f.maximumFractionDigits = 0
-    f.minimumFractionDigits = 0
-    f.groupingSeparator = ","
-    f.usesGroupingSeparator = true
-    return f.string(from: NSNumber(value: n)) ?? String(Int(n))
 }
 
 /// Integer-exact "N tokens" string (hover helps, AX labels).

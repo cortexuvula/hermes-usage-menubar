@@ -34,7 +34,7 @@ struct HermesUsageApp: App {
         let age = dayAgeLabel(updatedAt: model.updatedAt)
         var parts: [String] = []
         if let rec = model.record, let t = rec.todayTotalTokens {
-            parts.append("\(age.capitalized): \(exactTokens(Double(t)))")
+            parts.append("\(age.capitalized): \(exactTokens(t))")
         } else {
             parts.append("\(age.capitalized): —")
         }
@@ -76,7 +76,7 @@ struct MenuBarLabelView: View {
         let age = dayAgeLabel(updatedAt: model.updatedAt)
         var parts: [String] = []
         if let rec = model.record, let t = rec.todayTotalTokens {
-            parts.append("\(age.capitalized): \(exactTokens(Double(t)))")
+            parts.append("\(age.capitalized): \(exactTokens(t))")
         } else {
             parts.append("\(age.capitalized): —")
         }

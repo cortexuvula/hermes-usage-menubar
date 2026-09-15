@@ -214,11 +214,6 @@ struct I2Tests {
                "exactTokens Int overload exact at 2^55")
         expect(tokenCountString(9_007_199_254_740_993) == "9,007,199,254,740,993",
                "odd value above 2^53 (not representable in Double) still exact via Int, got \(tokenCountString(9_007_199_254_740_993))")
-        // Negative control: the old Double entry point is kept for fractional
-        // callers only; document its boundary behaviour explicitly.
-        print("I2/R8: Double entry point documented boundary (known rounding, not a pass/fail contract)")
-        expect(tokenCountString(Double(36_028_797_018_963_968)) == "36,028,797,018,963,970",
-               "Double entry point shows its documented ...970 rounding at 2^55 (kept for fractional callers only; if this FAILS, the Double path changed and integral call sites must be re-audited)")
 
         print("I2/R3: compactCost nil vs zero")
         expect(compactCost(nil) == "—", "nil → em dash")
