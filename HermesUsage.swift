@@ -1314,6 +1314,10 @@ struct ContentView: View {
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
+                if let reasoning = rec.details?.totals?.reasoning, reasoning > 0 {
+                    totalChip("Total reasoning", tokenCountString(Double(reasoning)),
+                              help: "\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
+                }
             }
             // F6: qualified call-coverage warning matching the disclosure wording
             if unknownCalls > 0 {
@@ -1420,7 +1424,6 @@ struct ContentView: View {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     let (modelName, totalTokens) = row
                     let mu = rec.modelUsage?[modelName]
-                    let reasoning = rec.details?.totals?.reasoning
                     VStack(alignment: .leading, spacing: 2) {
                         HStack {
                             Text(shortName(modelName))
@@ -1435,16 +1438,17 @@ struct ContentView: View {
                                 .help(exactTokens(Double(totalTokens)))
                         }
                         if let mu = mu {
-                            Text(formatTokenComponents(mu, reasoning: reasoning))
+                            Text(formatTokenComponents(mu))
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .help("Token components: some stores or providers may not record every component")
                         }
                     }
                     .padding(.vertical, 1)
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!, reasoning: reasoning) : "\(modelName), \(exactTokens(Double(totalTokens)))")
+                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!) : "\(modelName), \(exactTokens(Double(totalTokens)))")
                 }
                 if total > 8 {
                     Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
