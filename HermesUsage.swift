@@ -1490,33 +1490,58 @@ struct ContentView: View {
                                 .help(exactTokens(Double(totalTokens)))
                         }
                         if let mu = mu {
-                            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                                GridRow {
+                            ViewThatFits {
+                                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                    GridRow {
+                                        HStack(spacing: 4) {
+                                            Text("In:")
+                                            Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                        HStack(spacing: 4) {
+                                            Text("Out:")
+                                            Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                    }
+                                    GridRow {
+                                        HStack(spacing: 4) {
+                                            Text("Cache read:")
+                                            Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                        HStack(spacing: 4) {
+                                            Text("Cache write:")
+                                            Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                                .help("Token components: some stores or providers may not record every component")
+                                        }
+                                    }
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 4) {
                                         Text("In:")
                                         Text(tokenCountString(Double(mu.inputTokens ?? 0)))
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Out:")
                                         Text(tokenCountString(Double(mu.outputTokens ?? 0)))
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
                                     }
-                                }
-                                GridRow {
                                     HStack(spacing: 4) {
                                         Text("Cache read:")
                                         Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Cache write:")
                                         Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
                                             .help("Token components: some stores or providers may not record every component")
                                     }
                                 }
