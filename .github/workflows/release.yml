@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # tag pushes create a GitHub Release
 
 jobs:
   sign-and-verify:
@@ -320,8 +320,30 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # NOTE: no release-creation step yet. A GitHub Release requires the
-      # notarization gate above to pass AND explicit authorisation.
+      # ---- Publish GitHub Release on tag pushes ---------------------------
+      # The release gate above already hard-failed unless the artifact is
+      # notarized + stapled + spctl-accepted, so reaching this step on a
+      # tag push means the asset is distribution-grade. Non-tag runs
+      # (workflow_dispatch) never publish.
+      - name: Publish GitHub Release (tag pushes only)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          ZIP="$RUNNER_TEMP/pkg/HermesUsage-${ARTIFACT_LABEL}.zip"
+          ls -la "$ZIP"
+          gh release create "$TAG" "$ZIP" \
+            --title "$TAG" \
+            --verify-tag \
+            --notes "Signed + notarized + stapled build (Developer ID).
+
+          Verified by CI on this exact commit: codesign --verify --deep --strict, stapler validate, spctl -a -vv (source=Notarized Developer ID).
+
+          Limits (by design): usage numbers are device-wide across profiles, daily attribution is estimated, accessibility is AX-verified only."
+          gh release view "$TAG" --json assets,isDraft --jq '{assets: [.assets[].name], isDraft}'
 
       - name: Cleanup keychain
         if: always()
