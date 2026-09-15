@@ -104,14 +104,18 @@ func compactCost(_ n: Double?) -> String {
 /// emitted the literal ",.0f tokens" text. Use NumberFormatter for proper
 /// localized grouping.
 func exactTokens(_ n: Double) -> String {
+    "\(tokenCountString(n)) tokens"
+}
+
+/// Plain localized token count without "tokens" suffix, for inline component lists.
+func tokenCountString(_ n: Double) -> String {
     let f = NumberFormatter()
     f.numberStyle = .decimal
     f.maximumFractionDigits = 0
     f.minimumFractionDigits = 0
     f.groupingSeparator = ","
     f.usesGroupingSeparator = true
-    let s = f.string(from: NSNumber(value: n)) ?? String(Int(n))
-    return "\(s) tokens"
+    return f.string(from: NSNumber(value: n)) ?? String(Int(n))
 }
 
 let dayParser: DateFormatter = {
@@ -1285,19 +1289,33 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack {
-                        Text(shortName(row.0))
-                            .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(row.0)
-                        Spacer()
-                        Text(compactTokens(Double(row.1)))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .help(exactTokens(Double(row.1)))
+                    let (modelName, totalTokens) = row
+                    let mu = rec.modelUsage?[modelName]
+                    let reasoning = rec.details?.totals?.reasoning
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(shortName(modelName))
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(modelName)
+                            Spacer()
+                            Text(compactTokens(Double(totalTokens)))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .help(exactTokens(Double(totalTokens)))
+                        }
+                        if let mu = mu {
+                            Text(formatTokenComponents(mu, reasoning: reasoning))
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .padding(.vertical, 1)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!, reasoning: reasoning) : "\(modelName), \(exactTokens(Double(totalTokens)))")
                 }
                 if total > 8 {
                     Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
@@ -1593,5 +1611,43 @@ extension ModelUsage {
     var totalTokens: Int {
         (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
     }
+}
+
+// MARK: - B4: Token makeup
+
+/// B4: Format token-component summary for a model row.
+/// Components: input, output, cache-read, cache-write.
+/// Reasoning is appended only when explicitly supplied (never added to the four-component sum).
+/// Zero values are displayed as "0" (collector clamps missing to zero, so we cannot distinguish).
+func formatTokenComponents(_ mu: ModelUsage, reasoning: Int? = nil) -> String {
+    let input = mu.inputTokens ?? 0
+    let output = mu.outputTokens ?? 0
+    let cacheRead = mu.cacheReadInputTokens ?? 0
+    let cacheWrite = mu.cacheCreationInputTokens ?? 0
+    var parts = [
+        "In: \(tokenCountString(Double(input)))",
+        "Out: \(tokenCountString(Double(output)))",
+        "Cache-read: \(tokenCountString(Double(cacheRead)))",
+        "Cache-write: \(tokenCountString(Double(cacheWrite)))"
+    ]
+    if let r = reasoning, r > 0 {
+        parts.append("Reasoning: \(tokenCountString(Double(r)))")
+    }
+    return parts.joined(separator: " · ")
+}
+
+/// B4: Build accessibility label for a model row with token components.
+func formatModelAccessibilityLabel(modelName: String, mu: ModelUsage, reasoning: Int? = nil) -> String {
+    let total = mu.totalTokens
+    var label = "\(modelName), \(tokenCountString(Double(total))) total"
+    let input = mu.inputTokens ?? 0
+    let output = mu.outputTokens ?? 0
+    let cacheRead = mu.cacheReadInputTokens ?? 0
+    let cacheWrite = mu.cacheCreationInputTokens ?? 0
+    label += ". Input \(tokenCountString(Double(input))), Output \(tokenCountString(Double(output))), Cache read \(tokenCountString(Double(cacheRead))), Cache write \(tokenCountString(Double(cacheWrite)))"
+    if let r = reasoning, r > 0 {
+        label += ", Reasoning \(tokenCountString(Double(r)))"
+    }
+    return label
 }
 
