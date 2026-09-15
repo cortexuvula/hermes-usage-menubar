@@ -342,12 +342,16 @@ jobs:
           # remote: annotated v1.0.0 (3255a115 tag-obj -> a49d99d1 commit),
           # lightweight scratch tag (direct == commit), missing (empty),
           # moved (differs -> mismatch fires).
-          DIRECT_SHA=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          # One ls-remote round-trip for both refs: the direct and peeled
+          # SHAs then come from the same ref advertisement, so a tag moved
+          # between two separate queries cannot split the pair (TOCTOU).
+          REMOTE_REFS=$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}")
+          DIRECT_SHA=$(printf '%s\n' "$REMOTE_REFS" | awk -v t="refs/tags/$TAG" '$2==t{print $1}')
           if [ -z "$DIRECT_SHA" ]; then
             echo "::error::tag refs/tags/$TAG not found on remote"
             exit 1
           fi
-          PEELED_SHA=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f1)
+          PEELED_SHA=$(printf '%s\n' "$REMOTE_REFS" | awk -v t="refs/tags/$TAG^{}" '$2==t{print $1}')
           REMOTE_SHA="${PEELED_SHA:-$DIRECT_SHA}"
           if [ "$REMOTE_SHA" != "$GITHUB_SHA" ]; then
             echo "::error::tag/HEAD provenance mismatch: remote tag=$REMOTE_SHA build=$GITHUB_SHA"
