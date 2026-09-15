@@ -50,7 +50,8 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
-          set -x  # every command echoed: a hang is diagnosable from the log
+          # (set -x removed: the hang it was added to diagnose is solved;
+          #  keeping it would echo secret-bearing command lines to the log.)
           KEYCHAIN=build.keychain
           KEYCHAIN_PATH="$RUNNER_TEMP/$KEYCHAIN"
           CERT_P12="$RUNNER_TEMP/build_certificate.p12"
@@ -113,9 +114,9 @@ jobs:
 
           # Fail loudly if the identity is not actually usable.
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
-          grep -q "1 valid identities found" /tmp/identities.txt \
+          grep -qE "^\s*1 valid identities found" /tmp/identities.txt \
             || { echo "::error::expected exactly 1 codesigning identity, got the above"; exit 1; }
-          grep -q "$APPLE_SIGNING_IDENTITY" /tmp/identities.txt \
+          grep -qF "$APPLE_SIGNING_IDENTITY" /tmp/identities.txt \
             || { echo "::error::expected identity '$APPLE_SIGNING_IDENTITY' not found"; exit 1; }
           rm -f "$CERT_P12"
 
@@ -179,7 +180,6 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          set -x
           APP="$RUNNER_TEMP/pkg/HermesUsage.app"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize-submit.zip"
 
