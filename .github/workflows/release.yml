@@ -8,10 +8,6 @@ name: Release (signed build)
 on:
   push:
     tags: ["v*"]
-    # TEMPORARY (remove before merge): lets the release job be exercised from
-    # this branch because GitHub only registers workflow_dispatch for files
-    # already on the default branch. Branch-scoped, no pull_request.
-    branches: ["fix/release-signing"]
   workflow_dispatch:
     inputs:
       artifact_only:
