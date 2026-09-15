@@ -837,7 +837,7 @@ struct I2Tests {
         do {
             let full = ModelUsage(inputTokens: 1000, outputTokens: 500, cacheReadInputTokens: 200, cacheCreationInputTokens: 100)
             let breakdown = formatTokenComponents(full)
-            expect(breakdown == "In: 1,000 · Out: 500 · Cache-read: 200 · Cache-write: 100",
+            expect(breakdown == "In: 1,000 · Out: 500 · cache_read: 200 · cache_write: 100",
                    "all components present → '\(breakdown)'")
             
             let axLabel = formatModelAccessibilityLabel(modelName: "gpt-4", mu: full)
@@ -848,7 +848,7 @@ struct I2Tests {
             
             let withZeros = ModelUsage(inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
             let zerosBreakdown = formatTokenComponents(withZeros)
-            expect(zerosBreakdown.contains("Cache-read: 0") && zerosBreakdown.contains("Cache-write: 0"),
+            expect(zerosBreakdown.contains("cache_read: 0") && zerosBreakdown.contains("cache_write: 0"),
                    "zero components still shown → '\(zerosBreakdown)'")
             
             let partial = ModelUsage(inputTokens: 100, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
@@ -858,7 +858,7 @@ struct I2Tests {
             
             let allNil = ModelUsage(inputTokens: nil, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
             let nilBreakdown = formatTokenComponents(allNil)
-            expect(nilBreakdown == "In: 0 · Out: 0 · Cache-read: 0 · Cache-write: 0",
+            expect(nilBreakdown == "In: 0 · Out: 0 · cache_read: 0 · cache_write: 0",
                    "all nil → '\(nilBreakdown)'")
             
             let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)

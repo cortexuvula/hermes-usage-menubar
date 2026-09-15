@@ -1012,6 +1012,7 @@ struct ContentView: View {
     @State private var showAllModels = false
     @State private var clipboardCopied = false
     @State private var clipboardError: String?
+    @State private var feedbackTimer: DispatchWorkItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1767,26 +1768,41 @@ struct ContentView: View {
                     .keyboardShortcut("r", modifiers: .command)
                 Menu {
                     Button("Copy usage summary") {
+                        // Cancel any pending feedback timer
+                        feedbackTimer?.cancel()
+                    
                         if let rec = model.record {
                             let receipt = formatUsageReceipt(rec, loadState: model.loadState)
                             let pasteboard = NSPasteboard.general
                             pasteboard.clearContents()
                             if pasteboard.setString(receipt, forType: .string) {
+                                // Success: clear error, set success, schedule timer
+                                clipboardError = nil
                                 clipboardCopied = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                let timer = DispatchWorkItem {
                                     clipboardCopied = false
                                 }
+                                feedbackTimer = timer
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: timer)
                             } else {
+                                // Failure: clear success, set error, schedule timer
+                                clipboardCopied = false
                                 clipboardError = "Failed to write to clipboard"
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                let timer = DispatchWorkItem {
                                     clipboardError = nil
                                 }
+                                feedbackTimer = timer
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timer)
                             }
                         } else {
+                            // No data: clear success, set error, schedule timer
+                            clipboardCopied = false
                             clipboardError = "No usage data to copy"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            let timer = DispatchWorkItem {
                                 clipboardError = nil
                             }
+                            feedbackTimer = timer
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timer)
                         }
                     }
                     .disabled(model.record == nil)
@@ -1852,8 +1868,8 @@ func formatTokenComponents(_ mu: ModelUsage, reasoning: Int? = nil) -> String {
     var parts = [
         "In: \(tokenCountString(Double(input)))",
         "Out: \(tokenCountString(Double(output)))",
-        "Cache-read: \(tokenCountString(Double(cacheRead)))",
-        "Cache-write: \(tokenCountString(Double(cacheWrite)))"
+        "cache_read: \(tokenCountString(Double(cacheRead)))",
+        "cache_write: \(tokenCountString(Double(cacheWrite)))"
     ]
     if let r = reasoning, r > 0 {
         parts.append("Reasoning: \(tokenCountString(Double(r)))")
