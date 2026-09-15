@@ -864,6 +864,25 @@ struct I2Tests {
             let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)
             expect(nilAxLabel.contains("0 total"),
                    "accessibility label for all-nil → '\(nilAxLabel)'")
+            
+            // aggregateReasoning helper
+            let withReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"reasoning\":12345}}}"))
+            expect(aggregateReasoning(withReasoning) == 12345,
+                   "aggregateReasoning: > 0 yields the value → \(aggregateReasoning(withReasoning) ?? -1)")
+            
+            let zeroReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"reasoning\":0}}}"))
+            expect(aggregateReasoning(zeroReasoning) == nil,
+                   "aggregateReasoning: 0 yields nil → \(String(describing: aggregateReasoning(zeroReasoning)))")
+            
+            let missingReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"tokens\":1000}}}"))
+            expect(aggregateReasoning(missingReasoning) == nil,
+                   "aggregateReasoning: missing yields nil → \(String(describing: aggregateReasoning(missingReasoning)))")
         }
 
         // B5: formatUsageReceipt

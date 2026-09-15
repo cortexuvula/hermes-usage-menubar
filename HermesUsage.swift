@@ -167,6 +167,17 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
     return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
 }
 
+// MARK: - B4: Aggregate reasoning helper
+
+/// B4: Returns the aggregate reasoning token count when > 0, else nil.
+/// Used to decide whether to show the "Total reasoning" chip in the totals
+/// section. Never attributed to any specific model — it is a record-level
+/// aggregate only.
+func aggregateReasoning(_ rec: UsageRecord) -> Int? {
+    guard let r = rec.details?.totals?.reasoning, r > 0 else { return nil }
+    return r
+}
+
 // MARK: - F5: Provider cost helpers
 
 /// F5: True when any provider row has a nil cost (so the legend should show
@@ -1314,7 +1325,7 @@ struct ContentView: View {
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
-                if let reasoning = rec.details?.totals?.reasoning, reasoning > 0 {
+                if let reasoning = aggregateReasoning(rec) {
                     totalChip("Total reasoning", tokenCountString(Double(reasoning)),
                               help: "\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
                 }
