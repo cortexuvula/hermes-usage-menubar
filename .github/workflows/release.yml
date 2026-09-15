@@ -333,6 +333,14 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          # --verify-tag only proves the tag exists remotely; provenance needs
+          # the remote tag to resolve to the exact commit this run checked out
+          # and built (guards against a force-moved tag).
+          REMOTE_SHA=$(git ls-remote origin "refs/tags/$TAG" | cut -f1)
+          if [ "$REMOTE_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::tag/HEAD provenance mismatch: remote tag=$REMOTE_SHA build=$GITHUB_SHA"
+            exit 1
+          fi
           ZIP="$RUNNER_TEMP/pkg/HermesUsage-${ARTIFACT_LABEL}.zip"
           ls -la "$ZIP"
           gh release create "$TAG" "$ZIP" \
