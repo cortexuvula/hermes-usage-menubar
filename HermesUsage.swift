@@ -288,21 +288,16 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
         }
     case .noData:
         lines.append("Status: no local data found")
-    case .noStores(let msg):
+    case .noStores:
         lines.append("Status: no session stores found")
-        lines.append("Note: \(msg)")
-    case .unreadable(let msg):
+    case .unreadable:
         lines.append("Status: stores exist but could not be read")
-        lines.append("Note: \(msg)")
-    case .unrecognized(let msg):
+    case .unrecognized:
         lines.append("Status: data format not recognized")
-        lines.append("Note: \(msg)")
-    case .failed(let msg):
+    case .failed:
         lines.append("Status: collection failed")
-        lines.append("Note: \(msg)")
-    case .stale(let msg):
+    case .stale:
         lines.append("Status: showing previous data (refresh failed)")
-        lines.append("Note: \(msg)")
     case .initial, .loading:
         lines.append("Status: not yet collected")
     }

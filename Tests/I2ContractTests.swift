@@ -895,13 +895,41 @@ struct I2Tests {
             expect(!receipt.contains("/Users/") && !receipt.contains("account") && !receipt.contains("stderr"),
                    "receipt excludes sensitive paths/identifiers")
             
+            // Verify failure states don't leak diagnostic details (paths, stderr, etc.)
+            let pathLikeDiagnostic = "/Users/test/.local/share/hermes/session-store.db"
+            let stderrLikeDiagnostic = "error: failed to open /var/log/hermes.log: Permission denied"
+            
+            let emptyRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
+            
+            let noStoresReceipt = formatUsageReceipt(emptyRec, loadState: .noStores(pathLikeDiagnostic))
+            expect(noStoresReceipt.contains("no session stores found"), "noStores: status line present")
+            expect(!noStoresReceipt.contains("/Users/") && !noStoresReceipt.contains(".db"),
+                   "noStores: excludes path details")
+            
+            let unreadableReceipt = formatUsageReceipt(emptyRec, loadState: .unreadable(stderrLikeDiagnostic))
+            expect(unreadableReceipt.contains("could not be read"), "unreadable: status line present")
+            expect(!unreadableReceipt.contains("/var/log") && !unreadableReceipt.contains("Permission denied"),
+                   "unreadable: excludes stderr details")
+            
+            let unrecognizedReceipt = formatUsageReceipt(emptyRec, loadState: .unrecognized("unknown format at /tmp/data.json"))
+            expect(unrecognizedReceipt.contains("data format not recognized"), "unrecognized: status line present")
+            expect(!unrecognizedReceipt.contains("/tmp/") && !unrecognizedReceipt.contains(".json"),
+                   "unrecognized: excludes path details")
+            
+            let failedReceipt = formatUsageReceipt(emptyRec, loadState: .failed("exit code 1, stderr: \(stderrLikeDiagnostic)"))
+            expect(failedReceipt.contains("collection failed"), "failed: status line present")
+            expect(!failedReceipt.contains("/var/log") && !failedReceipt.contains("Permission denied") && !failedReceipt.contains("stderr"),
+                   "failed: excludes stderr and path details")
+            
             let staleRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
                 "\"updatedAt\":\"2026-09-13T10:00:00Z\"}"))
             
-            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("Network timeout"))
-            expect(staleReceipt.contains("showing previous data") && staleReceipt.contains("Network timeout"),
-                   "stale state reflected → contains status note")
+            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("refresh failed: \(pathLikeDiagnostic)"))
+            expect(staleReceipt.contains("showing previous data"), "stale: status line present")
+            expect(!staleReceipt.contains("/Users/") && !staleReceipt.contains("test"),
+                   "stale: excludes path details")
             
             let noDataRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
