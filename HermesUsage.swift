@@ -124,12 +124,15 @@ func tokenCountString(_ n: Int) -> String {
     // for an exact integral display at any magnitude. Pinned by the
     // boundary tests in Tests/I2ContractTests.swift.
     //
-    // Negative guard: the grouping loop counts '-' as a character, so
+    // Negative handling: the grouping loop counts '-' as a character, so
     // negatives with digit-count ≡ 0 (mod 3) get a spurious comma after
     // the sign (-123 → "-,123"). No model path produces negative counts,
     // but the function is ours and must be correct at every input.
-    if n < 0 { return "-" + tokenCountString(-n) }
-    let digits = String(n)
+    // Textual sign approach: drop the sign, group the magnitude, prepend.
+    // Never negates n — negation traps on Int.min (overflow). Caught by
+    // @turing/@codie at 0550703; this form avoids the trap they identified.
+    let negative = n < 0
+    let digits = negative ? String(String(n).dropFirst()) : String(n)
     var grouped = ""
     var inserted = 0
     for ch in digits.reversed() {
@@ -139,7 +142,8 @@ func tokenCountString(_ n: Int) -> String {
         grouped.append(ch)
         inserted += 1
     }
-    return String(grouped.reversed())
+    let result = String(grouped.reversed())
+    return negative ? "-" + result : result
 }
 
 /// Integer-exact "N tokens" string (hover helps, AX labels).

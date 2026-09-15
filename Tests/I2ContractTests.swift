@@ -215,16 +215,17 @@ struct I2Tests {
         expect(tokenCountString(9_007_199_254_740_993) == "9,007,199,254,740,993",
                "odd value above 2^53 (not representable in Double) still exact via Int, got \(tokenCountString(9_007_199_254_740_993))")
 
-        // Negative guard: the manual grouping loop counts '-' as a character,
-        // so negatives with digit-count ≡ 0 (mod 3) produce a spurious comma
-        // after the sign. No model path produces negatives, but the function
-        // is ours and must be correct at every input.
+        // Negative handling: textual sign approach — drop the sign, group the
+        // magnitude, prepend. Never negates n (which would trap on Int.min).
+        // No model path produces negatives, but the function is ours and must
+        // be correct at every input. Caught by @turing/@codie at 0550703.
         expect(tokenCountString(0) == "0", "zero")
-        expect(tokenCountString(-1) == "-1", "negative single digit")
         expect(tokenCountString(-123) == "-123", "negative 3 digits (coincidence case, was -,123 before guard)")
-        expect(tokenCountString(-1234) == "-1,234", "negative 4 digits")
         expect(tokenCountString(-123456) == "-123,456", "negative 6 digits (coincidence case)")
         expect(tokenCountString(-123456789) == "-123,456,789", "negative 9 digits (was -,123,456,789 before guard)")
+        expect(tokenCountString(Int.min) == "-9,223,372,036,854,775,808", "Int.min (traps negation form)")
+        expect(tokenCountString(Int.max) == "9,223,372,036,854,775,807", "Int.max")
+        expect(tokenCountString(9_007_199_254_740_993) == "9,007,199,254,740,993", "2^53+1 (odd value above 2^53)")
 
         print("I2/R3: compactCost nil vs zero")
         expect(compactCost(nil) == "—", "nil → em dash")
