@@ -832,6 +832,85 @@ struct I2Tests {
             expect(explicit.contains("dr-smith-followup"), "explicit task name passes through")
         }
 
+        // B4: formatTokenComponents and accessibility label
+        print("B4: token component breakdown and accessibility")
+        do {
+            let full = ModelUsage(inputTokens: 1000, outputTokens: 500, cacheReadInputTokens: 200, cacheCreationInputTokens: 100)
+            let breakdown = formatTokenComponents(full)
+            expect(breakdown == "In: 1,000 · Out: 500 · Cache-read: 200 · Cache-write: 100",
+                   "all components present → '\(breakdown)'")
+            
+            let axLabel = formatModelAccessibilityLabel(modelName: "gpt-4", mu: full)
+            expect(axLabel.contains("gpt-4") && axLabel.contains("1,800 total"),
+                   "accessibility label includes model and total → '\(axLabel)'")
+            expect(axLabel.contains("Input 1,000") && axLabel.contains("Output 500"),
+                   "accessibility label includes components")
+            
+            let withZeros = ModelUsage(inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
+            let zerosBreakdown = formatTokenComponents(withZeros)
+            expect(zerosBreakdown.contains("Cache-read: 0") && zerosBreakdown.contains("Cache-write: 0"),
+                   "zero components still shown → '\(zerosBreakdown)'")
+            
+            let partial = ModelUsage(inputTokens: 100, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
+            let partialBreakdown = formatTokenComponents(partial)
+            expect(partialBreakdown.contains("In: 100") && partialBreakdown.contains("Out: 0"),
+                   "missing output treated as zero → '\(partialBreakdown)'")
+            
+            let allNil = ModelUsage(inputTokens: nil, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
+            let nilBreakdown = formatTokenComponents(allNil)
+            expect(nilBreakdown == "In: 0 · Out: 0 · Cache-read: 0 · Cache-write: 0",
+                   "all nil → '\(nilBreakdown)'")
+            
+            let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)
+            expect(nilAxLabel.contains("0 total"),
+                   "accessibility label for all-nil → '\(nilAxLabel)'")
+        }
+
+        // B5: formatUsageReceipt
+        print("B5: usage receipt formatter")
+        do {
+            let fullRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"updatedAt\":\"2026-09-14T12:00:00Z\",\"todayTotalTokens\":50000," +
+                "\"details\":{\"scope\":\"all profiles\",\"coverage\":\"bounded local history\"," +
+                "\"dailyAttribution\":\"last 7 days\"," +
+                "\"totals\":{\"tokens\":1000000,\"calls\":500,\"estimatedUsd\":2.50}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":500000},\"openai\":{\"tokens\":500000}}}"))
+            
+            let receipt = formatUsageReceipt(fullRec, loadState: .success)
+            expect(receipt.contains("Hermes Usage Summary"), "receipt has header")
+            expect(receipt.contains("2026-09-14"), "receipt has snapshot timestamp")
+            expect(receipt.contains("all profiles") && receipt.contains("intended, not proven complete"),
+                   "receipt has scope with qualifier")
+            expect(receipt.contains("bounded local history"), "receipt has coverage")
+            expect(receipt.contains("50,000") && receipt.contains("estimated"),
+                   "receipt has today's estimate")
+            expect(receipt.contains("1,000,000"), "receipt has recorded history")
+            expect(receipt.contains("Reported calls: 500"), "receipt has calls")
+            expect(receipt.contains("$2.50") && receipt.contains("not invoice reconciliation"),
+                   "receipt has cost with qualifier")
+            expect(receipt.contains("2 providers"), "receipt has provider count")
+            expect(receipt.contains("last 7 days"), "receipt has daily attribution")
+            expect(receipt.contains("local Hermes Agent session stores"), "receipt has data source")
+            expect(!receipt.contains("/Users/") && !receipt.contains("account") && !receipt.contains("stderr"),
+                   "receipt excludes sensitive paths/identifiers")
+            
+            let staleRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"updatedAt\":\"2026-09-13T10:00:00Z\"}"))
+            
+            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("Network timeout"))
+            expect(staleReceipt.contains("showing previous data") && staleReceipt.contains("Network timeout"),
+                   "stale state reflected → contains status note")
+            
+            let noDataRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
+            
+            let noDataReceipt = formatUsageReceipt(noDataRec, loadState: .noData)
+            expect(noDataReceipt.contains("no local data found"),
+                   "no-data state reflected → '\(noDataReceipt.prefix(100))'")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)

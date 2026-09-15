@@ -50,6 +50,13 @@ struct Details: Codable {
     /// (e.g., "ordinary", "unknown", "other") or explicit task strings.
     /// Nullable to handle records from older collectors or missing data.
     let tasks: [String: ProviderDetail]?
+    /// B5: Scope and coverage metadata from collector.
+    /// scope: "device" (intended scope, not proven complete coverage)
+    /// coverage: "bounded local history"
+    /// dailyAttribution: description of how daily totals are attributed
+    let scope: String?
+    let coverage: String?
+    let dailyAttribution: String?
 }
 
 /// Mirrors the collector's new_detail_bucket() for per-provider groups.
@@ -242,6 +249,131 @@ func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
 
     let plural = unknown == 1 ? "row" : "rows"
     return "\(callsText); call count unavailable for \(unknown) usage \(plural)"
+}
+
+// MARK: - B5: Usage receipt formatter
+
+/// B5: Format a plain-text usage receipt for clipboard copy.
+/// Includes: snapshot timestamp, intended scope, coverage qualification,
+/// today's estimate, recorded-history totals, unknown values, data-source explanation.
+/// Excludes: file paths, profile/account identifiers, task labels, raw stderr, session content.
+/// The freshness timestamp is the SNAPSHOT time (updatedAt), never the copy time.
+func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> String {
+    var lines: [String] = []
+
+    // Header
+    lines.append("Hermes Usage Summary")
+    lines.append("")
+
+    // Snapshot timestamp (from collector, not copy time)
+    if let updatedAt = rec.updatedAt {
+        lines.append("Collected: \(updatedAt)")
+    } else {
+        lines.append("Collected: timestamp unavailable")
+    }
+
+    // Intended scope (from details or root)
+    let scope = rec.details?.scope ?? "device"
+    let coverage = rec.details?.coverage ?? "bounded local history"
+    lines.append("Scope: \(scope) (intended, not proven complete)")
+    lines.append("Coverage: \(coverage)")
+
+    // Collection state
+    switch loadState {
+    case .success:
+        if rec.details?.truncated == true {
+            lines.append("Status: partial collection (some data may be missing)")
+        } else {
+            lines.append("Status: complete collection")
+        }
+    case .noData:
+        lines.append("Status: no local data found")
+    case .noStores(let msg):
+        lines.append("Status: no session stores found")
+        lines.append("Note: \(msg)")
+    case .unreadable(let msg):
+        lines.append("Status: stores exist but could not be read")
+        lines.append("Note: \(msg)")
+    case .unrecognized(let msg):
+        lines.append("Status: data format not recognized")
+        lines.append("Note: \(msg)")
+    case .failed(let msg):
+        lines.append("Status: collection failed")
+        lines.append("Note: \(msg)")
+    case .stale(let msg):
+        lines.append("Status: showing previous data (refresh failed)")
+        lines.append("Note: \(msg)")
+    case .initial, .loading:
+        lines.append("Status: not yet collected")
+    }
+
+    lines.append("")
+
+    // Today's estimate
+    if let todayTokens = rec.todayTotalTokens {
+        lines.append("Today: \(exactTokens(Double(todayTokens))) (estimated)")
+    } else {
+        lines.append("Today: unavailable")
+    }
+
+    // Recorded history totals
+    if let totals = rec.details?.totals {
+        if let tokens = totals.tokens {
+            lines.append("Recorded history: \(exactTokens(Double(tokens)))")
+        } else {
+            lines.append("Recorded history: unavailable")
+        }
+
+        if let calls = totals.calls {
+            let unknownText = totals.unknownCallRows.map { " (call count unavailable for \($0) rows)" } ?? ""
+            lines.append("Reported calls: \(calls)\(unknownText)")
+        } else {
+            lines.append("Reported calls: unavailable")
+        }
+
+        if let estUsd = totals.estimatedUsd {
+            lines.append("Estimated cost: \(compactCost(estUsd)) (not invoice reconciliation)")
+        } else {
+            lines.append("Estimated cost: unavailable")
+        }
+
+        if let actualUsd = totals.actualUsd {
+            lines.append("Actual cost: \(compactCost(actualUsd)) (database observation)")
+        }
+    } else {
+        lines.append("Recorded history: unavailable")
+        lines.append("Reported calls: unavailable")
+        lines.append("Estimated cost: unavailable")
+    }
+
+    lines.append("")
+
+    // Provider summary (aggregate only, no identifiers)
+    if let providers = rec.providerUsage, !providers.isEmpty {
+        let count = providers.count
+        let plural = count == 1 ? "provider" : "providers"
+        lines.append("Providers: \(count) \(plural)")
+    }
+
+    // Model summary (aggregate only)
+    if let models = rec.modelUsage, !models.isEmpty {
+        let count = models.count
+        let plural = count == 1 ? "model" : "models"
+        lines.append("Models: \(count) \(plural)")
+    }
+
+    lines.append("")
+
+    // Data source explanation
+    if let attribution = rec.details?.dailyAttribution {
+        lines.append("Daily attribution: \(attribution)")
+    }
+    lines.append("Source: local Hermes Agent session stores on this Mac")
+    lines.append("")
+    lines.append("This is bounded local history, not a complete inventory.")
+    lines.append("Costs are database observations, not billing statements.")
+
+    return lines.joined(separator: "\n")
 }
 
 /// F3: Format explicit accessibility summary for a workload row.
@@ -846,6 +978,8 @@ struct WeekBars: View {
 struct ContentView: View {
     @EnvironmentObject var model: UsageModel
     @State private var showAllModels = false
+    @State private var clipboardCopied = false
+    @State private var clipboardError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1566,6 +1700,30 @@ struct ContentView: View {
                 .disabled(model.isLoading)
                 .keyboardShortcut("r", modifiers: .command)
             Menu {
+                Button("Copy usage summary") {
+                    if let rec = model.record {
+                        let receipt = formatUsageReceipt(rec, loadState: model.loadState)
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        if pasteboard.setString(receipt, forType: .string) {
+                            clipboardCopied = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                clipboardCopied = false
+                            }
+                        } else {
+                            clipboardError = "Failed to write to clipboard"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                clipboardError = nil
+                            }
+                        }
+                    } else {
+                        clipboardError = "No usage data to copy"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            clipboardError = nil
+                        }
+                    }
+                }
+                .disabled(model.record == nil)
                 Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
             } label: {
@@ -1575,9 +1733,31 @@ struct ContentView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More (⌘Q quits)")
+            .help("More (copy summary or quit)")
         }
         .padding(14)
+        .overlay(alignment: .bottom) {
+            if clipboardCopied {
+                Text("✓ Copied to clipboard")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                    .offset(y: -20)
+                    .transition(.opacity)
+            }
+            if let error = clipboardError {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                    .offset(y: -20)
+                    .transition(.opacity)
+            }
+        }
         .onAppear { _ = tick }  // R7: bind observation
         )
     }
