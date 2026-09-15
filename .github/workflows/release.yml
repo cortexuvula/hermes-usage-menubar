@@ -96,9 +96,18 @@ jobs:
             || { echo "::error::openssl cert extraction failed:"; cat /tmp/openssl.log; exit 1; }
           ls -la "$RUNNER_TEMP"/*.pem
           # Import certificates first, then the key from the combined PEM.
+          # The combined PEM re-contains the certs, so 'already exists' is
+          # EXPECTED — tolerate it (the private key still imports) and let
+          # the find-identity gate below prove the identity is complete.
           security import "$RUNNER_TEMP/cert.pem" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
+          set +e
           security import "$RUNNER_TEMP/combined.pem" -k "$KEYCHAIN_PATH" \
-            -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign
+            -P "$KEYCHAIN_PASSWORD" -T /usr/bin/codesign 2>/tmp/import2.log
+          IMP_RC=$?
+          set -e
+          if [ "$IMP_RC" -ne 0 ] && ! grep -q "already exists" /tmp/import2.log; then
+            echo "::error::combined.pem import failed:"; cat /tmp/import2.log; exit 1
+          fi
           rm -f "$RUNNER_TEMP/combined.pem" "$RUNNER_TEMP/cert.pem"
           # Partition list MUST come after import and must use the keychain
           # password; run with the keychain as the final arg (partition-list
