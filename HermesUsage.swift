@@ -167,6 +167,31 @@ func dayAgeLabel(updatedAt: Date?, now: Date = Date()) -> String {
     return days == 0 ? "today" : days == 1 ? "yesterday" : "\(days) days old"
 }
 
+// MARK: - R4: Snapshot date helpers for receipt
+
+/// R4: Parse ISO 8601 date string to Date
+func parseISODate(_ s: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: s) { return date }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: s)
+}
+
+/// R4: Format snapshot date as "today", "yesterday", or YYYY-MM-DD
+func formatSnapshotDay(_ date: Date) -> String {
+    let cal = Calendar.current
+    if cal.isDateInToday(date) {
+        return "today"
+    } else if cal.isDateInYesterday(date) {
+        return "yesterday"
+    } else {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - B4: Aggregate reasoning helper
 
 /// B4: Returns the aggregate reasoning token count when > 0, else nil.
@@ -315,11 +340,12 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
 
     lines.append("")
 
-    // Today's estimate
+    // R4: Daily estimate qualified by snapshot date, not copy-time "Today"
+    let snapshotDayLabel = rec.updatedAt.flatMap { parseISODate($0) }.map { formatSnapshotDay($0) } ?? "snapshot day"
     if let todayTokens = rec.todayTotalTokens {
-        lines.append("Today: \(exactTokens(Double(todayTokens))) (estimated)")
+        lines.append("Daily estimate (\(snapshotDayLabel)): \(exactTokens(Double(todayTokens))) (estimated)")
     } else {
-        lines.append("Today: unavailable")
+        lines.append("Daily estimate (\(snapshotDayLabel)): unavailable")
     }
 
     // Recorded history totals
@@ -1325,10 +1351,24 @@ struct ContentView: View {
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
                 totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
                           help: costHelp(rec.details?.totals?.estimatedUsd))
-                if let reasoning = aggregateReasoning(rec) {
-                    totalChip("Total reasoning", tokenCountString(Double(reasoning)),
-                              help: "\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
+            }
+            // R2: Total reasoning on its own full-width row below the 3-chip HStack
+            if let reasoning = aggregateReasoning(rec) {
+                HStack {
+                    Text("Total reasoning")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(tokenCountString(Double(reasoning)))
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
+                        .monospacedDigit()
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+                .help("\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Total reasoning \(tokenCountString(Double(reasoning)))")
             }
             // F6: qualified call-coverage warning matching the disclosure wording
             if unknownCalls > 0 {
@@ -1451,7 +1491,7 @@ struct ContentView: View {
                         if let mu = mu {
                             Text(formatTokenComponents(mu))
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(nil)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .help("Token components: some stores or providers may not record every component")
@@ -1692,82 +1732,77 @@ struct ContentView: View {
     private var footer: some View {
         // R7: explicitly observe displayTick to re-render time-dependent UI
         let tick = model.displayTick
+        let hasFeedback = clipboardCopied || clipboardError != nil
         return AnyView(
-        HStack {
-            if let t = model.updatedAt {
-                Text(footerAgeText(t))
-                    .font(.caption2)
-                    .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
-                    .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
-            } else {
-                Text("—")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer()
-            Button("Refresh") { model.refresh() }
-                .controlSize(.small)
-                .disabled(model.isLoading)
-                .keyboardShortcut("r", modifiers: .command)
-            Menu {
-                Button("Copy usage summary") {
-                    if let rec = model.record {
-                        let receipt = formatUsageReceipt(rec, loadState: model.loadState)
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        if pasteboard.setString(receipt, forType: .string) {
-                            clipboardCopied = true
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                clipboardCopied = false
-                            }
-                        } else {
-                            clipboardError = "Failed to write to clipboard"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                                clipboardError = nil
-                            }
-                        }
-                    } else {
-                        clipboardError = "No usage data to copy"
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            clipboardError = nil
-                        }
-                    }
-                }
-                .disabled(model.record == nil)
-                Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
-                    .keyboardShortcut("q")
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 13))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More (copy summary or quit)")
-        }
-        .padding(14)
-        .overlay(alignment: .bottom) {
+        VStack(spacing: 2) {
+            // R3: reserved feedback row above the timestamp — no overlay
             if clipboardCopied {
                 Text("✓ Copied to clipboard")
                     .font(.caption2)
                     .foregroundStyle(.green)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(Color.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-                    .offset(y: -20)
-                    .transition(.opacity)
-            }
-            if let error = clipboardError {
+                    .accessibilityLabel("Copied to clipboard")
+            } else if let error = clipboardError {
                 Text(error)
                     .font(.caption2)
                     .foregroundStyle(.red)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(Color.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
-                    .offset(y: -20)
-                    .transition(.opacity)
+                    .accessibilityLabel(error)
+            }
+            HStack {
+                if !hasFeedback {
+                    if let t = model.updatedAt {
+                        Text(footerAgeText(t))
+                            .font(.caption2)
+                            .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
+                            .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
+                    } else {
+                        Text("—")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                Spacer()
+                Button("Refresh") { model.refresh() }
+                    .controlSize(.small)
+                    .disabled(model.isLoading)
+                    .keyboardShortcut("r", modifiers: .command)
+                Menu {
+                    Button("Copy usage summary") {
+                        if let rec = model.record {
+                            let receipt = formatUsageReceipt(rec, loadState: model.loadState)
+                            let pasteboard = NSPasteboard.general
+                            pasteboard.clearContents()
+                            if pasteboard.setString(receipt, forType: .string) {
+                                clipboardCopied = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    clipboardCopied = false
+                                }
+                            } else {
+                                clipboardError = "Failed to write to clipboard"
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    clipboardError = nil
+                                }
+                            }
+                        } else {
+                            clipboardError = "No usage data to copy"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                clipboardError = nil
+                            }
+                        }
+                    }
+                    .disabled(model.record == nil)
+                    Button("Quit Hermes Usage", role: .destructive) { NSApplication.shared.terminate(nil) }
+                        .keyboardShortcut("q")
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More (copy summary or quit)")
             }
         }
+        .padding(14)
         .onAppear { _ = tick }  // R7: bind observation
         )
     }
