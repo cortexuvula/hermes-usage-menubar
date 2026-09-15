@@ -74,8 +74,12 @@ jobs:
           security list-keychain -d user >> /dev/null
           CURRENT_LIST=$(security list-keychain -d user | tr -d '"' | tr '\n' ' ')
           security list-keychain -d user -s $CURRENT_LIST "$KEYCHAIN_PATH"
+          # NOTE: no -A. On current macOS runners, importing with -A ("allow
+          # all apps") blocks indefinitely waiting for a UI confirmation a
+          # headless session can never provide — observed hanging 15+ min.
+          # Grant codesign alone via -T and rely on the partition list.
           security import "$CERT_P12" "$KEYCHAIN_PATH" \
-            -P "$P12_PASSWORD" -A -T /usr/bin/codesign
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
           # Partition list MUST come after import and must use the keychain
           # password; run with the keychain as the final arg (partition-list
           # can block on UI if the keychain is not yet in the search list).
