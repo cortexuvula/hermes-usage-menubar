@@ -196,6 +196,30 @@ struct I2Tests {
         expect(exactTokens(3234511) == "3,234,511 tokens", "grouped, got \(exactTokens(3234511))")
         expect(exactTokens(0) == "0 tokens", "zero")
 
+        // ---- Exact-integer formatting boundary (display-honesty regression) ----
+        // NumberFormatter's decimal conversion of a DOUBLE-valued NSNumber
+        // rounds at >=2^54 (its shortest round-trip decimal for 2^55 is
+        // ...970 while the Double is bit-exact). The Int overload must be
+        // exact at every boundary; the old Double path rendered
+        // 36,028,797,018,963,968 as 36,028,797,018,963,970 — the pinned
+        // regression below is the one that failed.
+        print("I2/R8: integer-exact boundaries (2^53 cap, 2^54, 4x2^53)")
+        expect(tokenCountString(9_007_199_254_740_992) == "9,007,199,254,740,992",
+               "2^53 (collector cap) exact, got \(tokenCountString(9_007_199_254_740_992))")
+        expect(tokenCountString(18_014_398_509_481_984) == "18,014,398,509,481,984",
+               "2^54 exact (old Double path rendered ...980), got \(tokenCountString(18_014_398_509_481_984))")
+        expect(tokenCountString(36_028_797_018_963_968) == "36,028,797,018,963,968",
+               "4 x 2^53 = 2^55 exact (PINNED: old path rendered 36,028,797,018,963,970), got \(tokenCountString(36_028_797_018_963_968))")
+        expect(exactTokens(36_028_797_018_963_968) == "36,028,797,018,963,968 tokens",
+               "exactTokens Int overload exact at 2^55")
+        expect(tokenCountString(9_007_199_254_740_993) == "9,007,199,254,740,993",
+               "odd value above 2^53 (not representable in Double) still exact via Int, got \(tokenCountString(9_007_199_254_740_993))")
+        // Negative control: the old Double entry point is kept for fractional
+        // callers only; document its boundary behaviour explicitly.
+        print("I2/R8: Double entry point documented boundary (known rounding, not a pass/fail contract)")
+        expect(tokenCountString(Double(36_028_797_018_963_968)) == "36,028,797,018,963,970",
+               "Double entry point shows its documented ...970 rounding at 2^55 (kept for fractional callers only; if this FAILS, the Double path changed and integral call sites must be re-audited)")
+
         print("I2/R3: compactCost nil vs zero")
         expect(compactCost(nil) == "—", "nil → em dash")
         expect(compactCost(0) == "$0.00", "zero → $0.00")

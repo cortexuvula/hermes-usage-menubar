@@ -115,6 +115,34 @@ func exactTokens(_ n: Double) -> String {
 }
 
 /// Plain localized token count without "tokens" suffix, for inline component lists.
+///
+/// Integer-exact: formats `NSNumber(value: Int)`. NumberFormatter's decimal
+/// conversion of a Double-valued NSNumber rounds at ≥2^54 (its shortest
+/// round-trip decimal for 2^55 is ...970 while the Double itself is exact),
+/// so every integral count must go through this Int path. Proven by the
+/// boundary tests in Tests/I2ContractTests.swift.
+func tokenCountString(_ n: Int) -> String {
+    // Manual grouping over String(n): NumberFormatter converts integer
+    // NSNumbers through a double internally and rounds ODD values above
+    // 2^53 (e.g. 9,007,199,254,740,993 -> ...992), so it cannot be used
+    // for an exact integral display at any magnitude. Pinned by the
+    // boundary tests in Tests/I2ContractTests.swift.
+    let digits = String(n)
+    var grouped = ""
+    var inserted = 0
+    for ch in digits.reversed() {
+        if inserted > 0 && inserted % 3 == 0 {
+            grouped.append(",")
+        }
+        grouped.append(ch)
+        inserted += 1
+    }
+    return String(grouped.reversed())
+}
+
+/// Double entry point retained for genuinely fractional callers only.
+/// Integral values MUST use the Int overload above — this path rounds
+/// at ≥2^54 (see tokenCountString(_: Int)).
 func tokenCountString(_ n: Double) -> String {
     let f = NumberFormatter()
     f.numberStyle = .decimal
@@ -123,6 +151,11 @@ func tokenCountString(_ n: Double) -> String {
     f.groupingSeparator = ","
     f.usesGroupingSeparator = true
     return f.string(from: NSNumber(value: n)) ?? String(Int(n))
+}
+
+/// Integer-exact "N tokens" string (hover helps, AX labels).
+func exactTokens(_ n: Int) -> String {
+    "\(tokenCountString(n)) tokens"
 }
 
 let dayParser: DateFormatter = {
@@ -343,7 +376,7 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
     // R4: Daily estimate qualified by snapshot date, not copy-time "Today"
     let snapshotDayLabel = rec.updatedAt.flatMap { parseISODate($0) }.map { formatSnapshotDay($0) } ?? "snapshot day"
     if let todayTokens = rec.todayTotalTokens {
-        lines.append("Daily estimate (\(snapshotDayLabel)): \(exactTokens(Double(todayTokens))) (estimated)")
+        lines.append("Daily estimate (\(snapshotDayLabel)): \(exactTokens(todayTokens)) (estimated)")
     } else {
         lines.append("Daily estimate (\(snapshotDayLabel)): unavailable")
     }
@@ -351,7 +384,7 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
     // Recorded history totals
     if let totals = rec.details?.totals {
         if let tokens = totals.tokens {
-            lines.append("Recorded history: \(exactTokens(Double(tokens)))")
+            lines.append("Recorded history: \(exactTokens(tokens))")
         } else {
             lines.append("Recorded history: unavailable")
         }
@@ -1001,7 +1034,7 @@ struct WeekBars: View {
     }
 
     private func barHelp(_ day: RecentDay) -> String {
-        "\(day.date) · \(exactTokens(Double(day.messageCount)))"
+        "\(day.date) · \(exactTokens(day.messageCount))"
     }
 }
 
@@ -1263,7 +1296,7 @@ struct ContentView: View {
             HStack(spacing: 14) {
                 statCell(label: "Tokens",
                          value: compactTokens(Double(rec.todayTotalTokens ?? 0)),
-                         help: rec.todayTotalTokens.map { exactTokens(Double($0)) })
+                         help: rec.todayTotalTokens.map { exactTokens($0) })
                 statCell(label: "Prompts",
                          value: rec.todayPrompts.map(String.init) ?? "—",
                          help: rec.todayPrompts.map { "\($0) prompts" })
@@ -1285,10 +1318,10 @@ struct ContentView: View {
                             Text(compactTokens(Double(entry.value)))
                                 .font(.caption.monospacedDigit())
                                 .frame(width: 52, alignment: .trailing)
-                                .help(exactTokens(Double(entry.value)))
+                                .help(exactTokens(entry.value))
                         }
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(entry.key), \(exactTokens(Double(entry.value)))")
+                        .accessibilityLabel("\(entry.key), \(exactTokens(entry.value))")
                     }
                 }
                 .font(.caption.weight(.medium))
@@ -1346,7 +1379,7 @@ struct ContentView: View {
                     : "Totals from complete local collection on this Mac.")
             HStack(spacing: 10) {
                 let allTokens = rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0
-                totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(Double(allTokens)))
+                totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(allTokens))
                 // F6: "Reported calls" not "Calls"
                 totalChip("Reported calls", rec.details?.totals?.calls.map(String.init) ?? "—",
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
@@ -1360,16 +1393,16 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Text(tokenCountString(Double(reasoning)))
+                    Text(tokenCountString(reasoning))
                         .font(.system(.callout, design: .rounded).weight(.semibold))
                         .monospacedDigit()
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
-                .help("\(tokenCountString(Double(reasoning))) reasoning tokens (aggregate, not per model)")
+                .help("\(tokenCountString(reasoning)) reasoning tokens (aggregate, not per model)")
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("Total reasoning \(tokenCountString(Double(reasoning)))")
+                .accessibilityLabel("Total reasoning \(tokenCountString(reasoning))")
             }
             // F6: qualified call-coverage warning matching the disclosure wording
             if unknownCalls > 0 {
@@ -1487,7 +1520,7 @@ struct ContentView: View {
                             Text(compactTokens(Double(totalTokens)))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
-                                .help(exactTokens(Double(totalTokens)))
+                                .help(exactTokens(totalTokens))
                         }
                         if let mu = mu {
                             ViewThatFits {
@@ -1495,13 +1528,13 @@ struct ContentView: View {
                                     GridRow {
                                         HStack(spacing: 4) {
                                             Text("In:")
-                                            Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                            Text(tokenCountString(mu.inputTokens ?? 0))
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.7)
                                         }
                                         HStack(spacing: 4) {
                                             Text("Out:")
-                                            Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                            Text(tokenCountString(mu.outputTokens ?? 0))
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.7)
                                         }
@@ -1509,13 +1542,13 @@ struct ContentView: View {
                                     GridRow {
                                         HStack(spacing: 4) {
                                             Text("Cache read:")
-                                            Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                            Text(tokenCountString(mu.cacheReadInputTokens ?? 0))
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.7)
                                         }
                                         HStack(spacing: 4) {
                                             Text("Cache write:")
-                                            Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                            Text(tokenCountString(mu.cacheCreationInputTokens ?? 0))
                                                 .lineLimit(1)
                                                 .minimumScaleFactor(0.7)
                                                 .help("Token components: some stores or providers may not record every component")
@@ -1525,22 +1558,22 @@ struct ContentView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 4) {
                                         Text("In:")
-                                        Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                        Text(tokenCountString(mu.inputTokens ?? 0))
                                             .lineLimit(1)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Out:")
-                                        Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                        Text(tokenCountString(mu.outputTokens ?? 0))
                                             .lineLimit(1)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Cache read:")
-                                        Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                        Text(tokenCountString(mu.cacheReadInputTokens ?? 0))
                                             .lineLimit(1)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Cache write:")
-                                        Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                        Text(tokenCountString(mu.cacheCreationInputTokens ?? 0))
                                             .lineLimit(1)
                                             .help("Token components: some stores or providers may not record every component")
                                     }
@@ -1552,7 +1585,7 @@ struct ContentView: View {
                     }
                     .padding(.vertical, 1)
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!) : "\(modelName), \(exactTokens(Double(totalTokens)))")
+                    .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!) : "\(modelName), \(exactTokens(totalTokens))")
                 }
                 if total > 8 {
                     Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
@@ -1630,7 +1663,7 @@ struct ContentView: View {
                         Text(compactTokens(Double(providerUsage.tokens ?? 0)))
                             .font(.caption.monospacedDigit())
                             .frame(width: 52, alignment: .trailing)
-                            .help(exactTokens(Double(providerUsage.tokens ?? 0)))
+                            .help(exactTokens(providerUsage.tokens ?? 0))
                     }
                     .padding(.vertical, 1)
                 }
@@ -1911,14 +1944,14 @@ extension ModelUsage {
 /// B4: Build accessibility label for a model row with token components.
 func formatModelAccessibilityLabel(modelName: String, mu: ModelUsage, reasoning: Int? = nil) -> String {
     let total = mu.totalTokens
-    var label = "\(modelName), \(tokenCountString(Double(total))) total"
+    var label = "\(modelName), \(tokenCountString(total)) total"
     let input = mu.inputTokens ?? 0
     let output = mu.outputTokens ?? 0
     let cacheRead = mu.cacheReadInputTokens ?? 0
     let cacheWrite = mu.cacheCreationInputTokens ?? 0
-    label += ". Input \(tokenCountString(Double(input))), Output \(tokenCountString(Double(output))), Cache read \(tokenCountString(Double(cacheRead))), Cache write \(tokenCountString(Double(cacheWrite)))"
+    label += ". Input \(tokenCountString(input)), Output \(tokenCountString(output)), Cache read \(tokenCountString(cacheRead)), Cache write \(tokenCountString(cacheWrite))"
     if let r = reasoning, r > 0 {
-        label += ", Reasoning \(tokenCountString(Double(r)))"
+        label += ", Reasoning \(tokenCountString(r))"
     }
     return label
 }
