@@ -63,6 +63,20 @@ rm ~/Library/LaunchAgents/ca.andrehugo.hermes-usage.plist
 
 MIT — see LICENSE (upstream) and HermesUsage.swift.
 
+## Known app behaviour: a failed copy empties the clipboard
+
+`Copy usage summary` is the only clipboard writer. Its path calls
+`NSPasteboard.clearContents()` before writing the receipt, so if the write is
+then **rejected** — a pasteboard-server failure, not a no-data or formatting
+case, since the receipt is built before the clipboard is touched — the clipboard
+is left empty rather than retaining what it held.
+
+Restoring the previous contents would require the app to **read** your clipboard
+first. This app otherwise never reads it, and that guarantee is worth more than
+covering a rare failure, so the behaviour is documented here rather than fixed.
+Reordering the code does not help: the receipt is already constructed before the
+clipboard is touched, and the clear/write pair is atomic from the app's side.
+
 ## Known collector caveat (unmodified upstream behavior)
 
 The bundled collector is kept byte-identical to upstream
