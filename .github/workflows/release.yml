@@ -145,24 +145,77 @@ jobs:
           codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
             --options runtime --timestamp "$APP"
 
-      # ---- Constraint 3: notarization is a REAL step that fails loudly ----
-      - name: Notarize + staple (requires App Store Connect API key)
-        id: notarize
-        continue-on-error: true
+      # ---- Constraint 3: notarization is a REAL step ---------------------
+      # Two explicitly separate paths:
+      #   credentials ABSENT  -> skip notarization, label signed-only loudly,
+      #                          release gate stays closed. Run may be green.
+      #   credentials PRESENT -> notarytool/stapler run with NO
+      #                          continue-on-error: a genuine Apple rejection
+      #                          FAILS the job. Never silently swallowed.
+      - name: Detect notarization route
+        id: notary_route
         env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -euo pipefail
-          if [ -z "${APPLE_API_KEY_ID:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ]; then
-            echo "::error::notarization credentials are NOT configured (need the App Store Connect .p8 key). This build will be a SIGNED-ONLY artifact and MUST NOT be presented as a notarized release."
-            exit 1
+          if [ -n "${APPLE_API_KEY_CONTENT:-}" ] && [ -n "${APPLE_API_KEY_ID:-}" ] && [ -n "${APPLE_API_ISSUER:-}" ]; then
+            echo "route=key" >> "$GITHUB_OUTPUT"
+          elif [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ]; then
+            echo "route=appleid" >> "$GITHUB_OUTPUT"
+          else
+            echo "route=none" >> "$GITHUB_OUTPUT"
           fi
-          echo "::error::APPLE_API_KEY_ID/ISSUER are set but no .p8 content secret exists yet — notarization cannot proceed with issuer/key-id alone."
-          echo "When the .p8 is available: write it to \$RUNNER_TEMP/AuthKey_\${APPLE_API_KEY_ID}.p8, then:"
-          echo "  xcrun notarytool submit app.zip --key ... --key-id ... --issuer ... --wait"
-          echo "  xcrun stapler staple HermesUsage.app"
-          exit 1
+
+      - name: Notarize + staple
+        id: notarize
+        if: steps.notary_route.outputs.route != 'none'
+        env:
+          ROUTE: ${{ steps.notary_route.outputs.route }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          set -x
+          APP="$RUNNER_TEMP/pkg/HermesUsage.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/notarize-submit.zip"
+
+          if [ "$ROUTE" = "key" ]; then
+            # Preferred long-term route once the .p8 content secret exists.
+            KEYFILE="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+            printf '%s' "$APPLE_API_KEY_CONTENT" > "$KEYFILE"
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
+              --key "$KEYFILE" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
+            rm -f "$KEYFILE"
+          else
+            # Apple-ID + app-specific password route (active today).
+            xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          fi
+
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          echo "NOTARIZED=yes" >> "$GITHUB_ENV"
+          echo "STAPLED=yes" >> "$GITHUB_ENV"
+
+      - name: Signed-only notice (notarization credentials absent)
+        if: steps.notary_route.outputs.route == 'none'
+        run: |
+          {
+            echo "## ⚠️ SIGNED-ONLY ARTIFACT — NOT NOTARIZED"
+            echo ""
+            echo "This build is Developer ID signed but NOT notarized (no notarization credentials configured)."
+            echo "It MUST NOT be distributed as a release. The release gate remains closed."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::notarization credentials absent — artifact is SIGNED-ONLY and must not be presented as a release"
 
       # ---- Constraint 4: verify the FINAL distributed artifact ------------
       - name: Verify final artifact (post-sign evidence)
@@ -209,13 +262,12 @@ jobs:
             echo "SPCTL_ASSESS=rejected" >> "$GITHUB_ENV"
           fi
 
-      - name: Staple validation (evidence; fails if notarization ran)
+      - name: Staple validation (final-artifact evidence)
         if: steps.notarize.outcome == 'success'
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/pkg/HermesUsage.app"
           xcrun stapler validate "$APP"
-          echo "STAPLED=yes" >> "$GITHUB_ENV"
 
       # ---- Release gate (constraint 3 + 4) ---------------------------------
       - name: Enforce release gate
@@ -233,7 +285,7 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/pkg"
           LABEL="signed-only-NOT-NOTARIZED"
-          if [ "${STAPLED:-no}" = "yes" ]; then LABEL="notarized-stapled"; fi
+          if [ "${STAPLED:-no}" = "yes" ] && [ "${NOTARIZED:-no}" = "yes" ]; then LABEL="notarized-stapled"; fi
           ditto -c -k --keepParent HermesUsage.app "HermesUsage-${LABEL}.zip"
           echo "ARTIFACT_LABEL=$LABEL" >> "$GITHUB_ENV"
           ls -la
@@ -241,7 +293,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: HermesUsage-${{ env.ARTIFACT_LABEL }}
-          path: ${{ runner.temp }}/pkg/HermesUsage-signed-only-NOT-NOTARIZED.zip
+          path: ${{ runner.temp }}/pkg/HermesUsage-${{ env.ARTIFACT_LABEL }}.zip
           if-no-files-found: error
           retention-days: 14
 
