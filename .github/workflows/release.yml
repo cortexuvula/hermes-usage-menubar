@@ -198,18 +198,18 @@ jobs:
               --key "$KEYFILE" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" --wait
             rm -f "$KEYFILE"
           else
-            # Apple-ID route (active today). The app-specific password is
-            # passed via the NOTARYTOOL_PASSWORD env var and stashed once
-            # into a keychain profile, so neither submit nor store carries
-            # it as a ps-visible argv.
-            export NOTARYTOOL_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD"
-            # NOTE: store-credentials on current Xcode has no --force;
-            # the build keychain is fresh each run so the profile name
-            # can never collide with a stale one.
-            xcrun notarytool store-credentials HERMES_NOTARY \
-              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-              --keychain "$RUNNER_TEMP/build.keychain"
-            unset NOTARYTOOL_PASSWORD
+            # Apple-ID route (active today). notarytool has NO env-var form
+            # for the app-specific password (verified: zero occurrences of
+            # NOTARYTOOL_PASSWORD in the binary) — but its secure prompt
+            # reads from a pipe when stdin is not a TTY. Piping the password
+            # keeps it out of both argv and the process environment; the
+            # submit then uses only the stored keychain profile.
+            # (store-credentials has no --force; the build keychain is
+            # created fresh each run, so the profile cannot collide.)
+            printf '%s' "$APPLE_APP_SPECIFIC_PASSWORD" | \
+              xcrun notarytool store-credentials HERMES_NOTARY \
+                --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+                --keychain "$RUNNER_TEMP/build.keychain"
             xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
               --keychain-profile HERMES_NOTARY \
               --keychain "$RUNNER_TEMP/build.keychain" --wait
