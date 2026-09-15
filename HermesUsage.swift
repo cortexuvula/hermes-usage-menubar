@@ -123,6 +123,12 @@ func tokenCountString(_ n: Int) -> String {
     // 2^53 (e.g. 9,007,199,254,740,993 -> ...992), so it cannot be used
     // for an exact integral display at any magnitude. Pinned by the
     // boundary tests in Tests/I2ContractTests.swift.
+    //
+    // Negative guard: the grouping loop counts '-' as a character, so
+    // negatives with digit-count ≡ 0 (mod 3) get a spurious comma after
+    // the sign (-123 → "-,123"). No model path produces negative counts,
+    // but the function is ours and must be correct at every input.
+    if n < 0 { return "-" + tokenCountString(-n) }
     let digits = String(n)
     var grouped = ""
     var inserted = 0
