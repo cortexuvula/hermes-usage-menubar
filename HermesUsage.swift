@@ -1517,6 +1517,7 @@ struct ContentView: View {
                                         Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
                                             .lineLimit(1)
                                             .minimumScaleFactor(0.7)
+                                            .help("Token components: some stores or providers may not record every component")
                                     }
                                 }
                             }
@@ -1527,7 +1528,6 @@ struct ContentView: View {
                     .padding(.vertical, 1)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel(mu != nil ? formatModelAccessibilityLabel(modelName: modelName, mu: mu!) : "\(modelName), \(exactTokens(Double(totalTokens)))")
-                    .accessibilityHint("Token components: some stores or providers may not record every component")
                 }
                 if total > 8 {
                     Button(showAllModels ? "Show fewer" : "Show all models (\(total))") {
