@@ -76,17 +76,25 @@ jobs:
           security list-keychain -d user -s $CURRENT_LIST "$KEYCHAIN_PATH"
           # The P12 is legacy-encoded (pbeWithSHA1And40BitRC2-CBC, the
           # pre-2010 default). macOS 26's 'security import' silently hangs
-          # on it (verified: 15-min stalls with and without -A; openssl
-          # parses the same file and password fine). Route around it:
-          # extract cert + key with openssl, then import the PEM pieces —
-          # 'security import' handles PEM without the legacy KDF path.
-          openssl pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
+          # on it, and Homebrew OpenSSL 3 refuses RC2 without the legacy
+          # provider. The macOS SYSTEM /usr/bin/openssl is LibreSSL, which
+          # reads legacy P12s natively — prefer it; fall back to
+          # 'openssl -legacy' if the system binary is unavailable.
+          OSSL=/usr/bin/openssl
+          if ! "$OSSL" pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
+              -nokeys -nocerts -info >/dev/null 2>/tmp/openssl-probe.log; then
+            echo "system openssl probe failed; trying openssl -legacy"
+            cat /tmp/openssl-probe.log
+            OSSL="openssl -legacy"
+          fi
+          $OSSL pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
             -passout pass:"$KEYCHAIN_PASSWORD" \
             -out "$RUNNER_TEMP/combined.pem" 2>/tmp/openssl.log \
             || { echo "::error::openssl pkcs12 extraction failed:"; cat /tmp/openssl.log; exit 1; }
-          openssl pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
+          $OSSL pkcs12 -in "$CERT_P12" -passin pass:"$P12_PASSWORD" \
             -nokeys -out "$RUNNER_TEMP/cert.pem" 2>>/tmp/openssl.log \
             || { echo "::error::openssl cert extraction failed:"; cat /tmp/openssl.log; exit 1; }
+          ls -la "$RUNNER_TEMP"/*.pem
           # Import certificates first, then the key from the combined PEM.
           security import "$RUNNER_TEMP/cert.pem" -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
           security import "$RUNNER_TEMP/combined.pem" -k "$KEYCHAIN_PATH" \
