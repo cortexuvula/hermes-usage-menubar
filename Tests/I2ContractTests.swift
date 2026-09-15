@@ -958,6 +958,71 @@ struct I2Tests {
                    "no-data state reflected → '\(noDataReceipt.prefix(100))'")
         }
 
+        // B5: stale receipt retains prior snapshot and leaks no diagnostic (model-level)
+        print("B5: stale receipt retains prior snapshot and leaks no diagnostic (model-level)")
+        do {
+            let canaryMarker = "CANARY-XYZ-789"
+            let syntheticPath = "/Users/synthetic-abc123/.hermes/session-store.db"
+            let failingDiagnostic = "hermes-usage: no Hermes Agent session store found (looked in \(syntheticPath)) — \(canaryMarker)"
+            
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                        "\"updatedAt\":\"2026-09-14T08:30:00Z\",\"todayTotalTokens\":42000," +
+                        "\"details\":{\"scope\":\"device\",\"coverage\":\"full\",\"dailyAttribution\":\"7-day\"," +
+                        "\"totals\":{\"tokens\":150000,\"calls\":300,\"estimatedUsd\":1.25}," +
+                        "\"truncated\":false}," +
+                        "\"modelUsage\":{\"gpt-4\":{\"inputTokens\":50000,\"outputTokens\":25000,\"cacheReadInputTokens\":0,\"cacheCreationInputTokens\":0}}," +
+                        "\"providerUsage\":{\"openai\":{\"estimatedCostUsd\":1.25}}}")), elapsed: 0.05),
+                    CollectorOutcome(kind: .failure(failingDiagnostic), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            
+            // First refresh: success
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first load succeeded")
+            expect(m.record?.todayTotalTokens == 42000, "first record has tokens")
+            let firstUpdatedAt = m.record?.updatedAt
+            expect(firstUpdatedAt != nil, "first record has updatedAt")
+            
+            // Second refresh: failure
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            
+            // Model retains previous record
+            expect(m.isStale, "model is stale after failed refresh")
+            expect(m.record != nil, "record retained after failure")
+            expect(m.record?.todayTotalTokens == 42000, "retained record has original tokens")
+            expect(m.record?.updatedAt == firstUpdatedAt, "retained record has original updatedAt")
+            
+            // Format receipt from stale state
+            let receipt = formatUsageReceipt(m.record!, loadState: m.loadState)
+            
+            // (a) names the stale condition
+            expect(receipt.contains("showing previous data"),
+                   "stale: receipt names stale condition → '\(receipt)'")
+            
+            // (b) retains prior snapshot's token values
+            expect(receipt.contains("42,000"), "stale: retains token count")
+            expect(receipt.contains("150,000"), "stale: retains total tokens")
+            expect(receipt.contains("Reported calls: 300"), "stale: retains call count")
+            
+            // (c) keeps SNAPSHOT timestamp, not current time
+            expect(receipt.contains("2026-09-14"), "stale: retains snapshot date")
+            expect(!receipt.contains("now") && !receipt.contains("current time"),
+                   "stale: does not substitute current time")
+            
+            // (d) diagnostic, path, canary appear NOWHERE
+            expect(!receipt.contains(syntheticPath),
+                   "stale: excludes synthetic path → path=\(syntheticPath)")
+            expect(!receipt.contains(canaryMarker),
+                   "stale: excludes canary marker → canary=\(canaryMarker)")
+            expect(!receipt.contains("looked in"), "stale: excludes diagnostic phrasing")
+            expect(!receipt.contains("synthetic-abc123"), "stale: excludes path components")
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
