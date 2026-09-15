@@ -1509,12 +1509,12 @@ struct ContentView: View {
                                     HStack(spacing: 4) {
                                         Text("Cache write:")
                                         Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                            .help("Token components: some stores or providers may not record every component")
                                     }
                                 }
                             }
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .help("Token components: some stores or providers may not record every component")
                         }
                     }
                     .padding(.vertical, 1)
