@@ -203,9 +203,12 @@ jobs:
             # into a keychain profile, so neither submit nor store carries
             # it as a ps-visible argv.
             export NOTARYTOOL_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD"
+            # NOTE: store-credentials on current Xcode has no --force;
+            # the build keychain is fresh each run so the profile name
+            # can never collide with a stale one.
             xcrun notarytool store-credentials HERMES_NOTARY \
               --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
-              --keychain "$RUNNER_TEMP/build.keychain" --force
+              --keychain "$RUNNER_TEMP/build.keychain"
             unset NOTARYTOOL_PASSWORD
             xcrun notarytool submit "$RUNNER_TEMP/notarize-submit.zip" \
               --keychain-profile HERMES_NOTARY \
