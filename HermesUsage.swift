@@ -1490,12 +1490,31 @@ struct ContentView: View {
                                 .help(exactTokens(Double(totalTokens)))
                         }
                         if let mu = mu {
-                            Text(formatTokenComponents(mu))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(nil)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .help("Token components: some stores or providers may not record every component")
+                            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                GridRow {
+                                    HStack(spacing: 4) {
+                                        Text("In:")
+                                        Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                    }
+                                    HStack(spacing: 4) {
+                                        Text("Out:")
+                                        Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                    }
+                                }
+                                GridRow {
+                                    HStack(spacing: 4) {
+                                        Text("Cache read:")
+                                        Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                    }
+                                    HStack(spacing: 4) {
+                                        Text("Cache write:")
+                                        Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                    }
+                                }
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .help("Token components: some stores or providers may not record every component")
                         }
                     }
                     .padding(.vertical, 1)
@@ -1868,8 +1887,8 @@ func formatTokenComponents(_ mu: ModelUsage, reasoning: Int? = nil) -> String {
     var parts = [
         "In: \(tokenCountString(Double(input)))",
         "Out: \(tokenCountString(Double(output)))",
-        "cache_read: \(tokenCountString(Double(cacheRead)))",
-        "cache_write: \(tokenCountString(Double(cacheWrite)))"
+        "Cache read: \(tokenCountString(Double(cacheRead)))",
+        "Cache write: \(tokenCountString(Double(cacheWrite)))"
     ]
     if let r = reasoning, r > 0 {
         parts.append("Reasoning: \(tokenCountString(Double(r)))")
