@@ -9,11 +9,6 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      artifact_only:
-        description: "Produce a signed-only test artifact (no notarization, no GitHub release)"
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -123,8 +118,17 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" | tee /tmp/identities.txt
           grep -qE "^\s*1 valid identities found" /tmp/identities.txt \
             || { echo "::error::expected exactly 1 codesigning identity, got the above"; exit 1; }
-          grep -qF "$APPLE_SIGNING_IDENTITY" /tmp/identities.txt \
-            || { echo "::error::expected identity '$APPLE_SIGNING_IDENTITY' not found"; exit 1; }
+          # Exact-equality identity check: extract the quoted name from the
+          # numbered find-identity line and compare strings. A substring
+          # grep (even -qF) would accept "…(RB4QV9W52C) EXTRA" — proven by
+          # fixture test; this form rejects it.
+          ACTUAL_IDENTITY=$(sed -nE \
+            's/^[[:space:]]*[0-9]+\)[[:space:]]+[A-F0-9]+[[:space:]]+"(.*)"$/\1/p' \
+            /tmp/identities.txt | head -1)
+          if [ "$ACTUAL_IDENTITY" != "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "::error::identity mismatch. expected: [$APPLE_SIGNING_IDENTITY] actual: [$ACTUAL_IDENTITY]"
+            exit 1
+          fi
           rm -f "$CERT_P12"
 
       - name: Build with hardened runtime + Developer ID signature
