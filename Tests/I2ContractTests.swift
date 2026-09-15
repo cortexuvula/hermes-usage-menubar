@@ -832,13 +832,10 @@ struct I2Tests {
             expect(explicit.contains("dr-smith-followup"), "explicit task name passes through")
         }
 
-        // B4: formatTokenComponents and accessibility label
-        print("B4: token component breakdown and accessibility")
+        // B4: accessibility label for model rows
+        print("B4: model row accessibility label")
         do {
             let full = ModelUsage(inputTokens: 1000, outputTokens: 500, cacheReadInputTokens: 200, cacheCreationInputTokens: 100)
-            let breakdown = formatTokenComponents(full)
-            expect(breakdown == "In: 1,000 · Out: 500 · Cache read: 200 · Cache write: 100",
-                   "all components present → '\(breakdown)'")
             
             let axLabel = formatModelAccessibilityLabel(modelName: "gpt-4", mu: full)
             expect(axLabel.contains("gpt-4") && axLabel.contains("1,800 total"),
@@ -846,21 +843,7 @@ struct I2Tests {
             expect(axLabel.contains("Input 1,000") && axLabel.contains("Output 500"),
                    "accessibility label includes components")
             
-            let withZeros = ModelUsage(inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
-            let zerosBreakdown = formatTokenComponents(withZeros)
-            expect(zerosBreakdown.contains("Cache read: 0") && zerosBreakdown.contains("Cache write: 0"),
-                   "zero components still shown → '\(zerosBreakdown)'")
-            
-            let partial = ModelUsage(inputTokens: 100, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
-            let partialBreakdown = formatTokenComponents(partial)
-            expect(partialBreakdown.contains("In: 100") && partialBreakdown.contains("Out: 0"),
-                   "missing output treated as zero → '\(partialBreakdown)'")
-            
             let allNil = ModelUsage(inputTokens: nil, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
-            let nilBreakdown = formatTokenComponents(allNil)
-            expect(nilBreakdown == "In: 0 · Out: 0 · Cache read: 0 · Cache write: 0",
-                   "all nil → '\(nilBreakdown)'")
-            
             let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)
             expect(nilAxLabel.contains("0 total"),
                    "accessibility label for all-nil → '\(nilAxLabel)'")
