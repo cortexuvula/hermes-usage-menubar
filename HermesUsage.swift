@@ -1490,25 +1490,58 @@ struct ContentView: View {
                                 .help(exactTokens(Double(totalTokens)))
                         }
                         if let mu = mu {
-                            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                                GridRow {
+                            ViewThatFits {
+                                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                    GridRow {
+                                        HStack(spacing: 4) {
+                                            Text("In:")
+                                            Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                        HStack(spacing: 4) {
+                                            Text("Out:")
+                                            Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                    }
+                                    GridRow {
+                                        HStack(spacing: 4) {
+                                            Text("Cache read:")
+                                            Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                        }
+                                        HStack(spacing: 4) {
+                                            Text("Cache write:")
+                                            Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                                .lineLimit(1)
+                                                .minimumScaleFactor(0.7)
+                                                .help("Token components: some stores or providers may not record every component")
+                                        }
+                                    }
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
                                     HStack(spacing: 4) {
                                         Text("In:")
                                         Text(tokenCountString(Double(mu.inputTokens ?? 0)))
+                                            .lineLimit(1)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Out:")
                                         Text(tokenCountString(Double(mu.outputTokens ?? 0)))
+                                            .lineLimit(1)
                                     }
-                                }
-                                GridRow {
                                     HStack(spacing: 4) {
                                         Text("Cache read:")
                                         Text(tokenCountString(Double(mu.cacheReadInputTokens ?? 0)))
+                                            .lineLimit(1)
                                     }
                                     HStack(spacing: 4) {
                                         Text("Cache write:")
                                         Text(tokenCountString(Double(mu.cacheCreationInputTokens ?? 0)))
+                                            .lineLimit(1)
                                             .help("Token components: some stores or providers may not record every component")
                                     }
                                 }
@@ -1874,27 +1907,6 @@ extension ModelUsage {
 }
 
 // MARK: - B4: Token makeup
-
-/// B4: Format token-component summary for a model row.
-/// Components: input, output, cache-read, cache-write.
-/// Reasoning is appended only when explicitly supplied (never added to the four-component sum).
-/// Zero values are displayed as "0" (collector clamps missing to zero, so we cannot distinguish).
-func formatTokenComponents(_ mu: ModelUsage, reasoning: Int? = nil) -> String {
-    let input = mu.inputTokens ?? 0
-    let output = mu.outputTokens ?? 0
-    let cacheRead = mu.cacheReadInputTokens ?? 0
-    let cacheWrite = mu.cacheCreationInputTokens ?? 0
-    var parts = [
-        "In: \(tokenCountString(Double(input)))",
-        "Out: \(tokenCountString(Double(output)))",
-        "Cache read: \(tokenCountString(Double(cacheRead)))",
-        "Cache write: \(tokenCountString(Double(cacheWrite)))"
-    ]
-    if let r = reasoning, r > 0 {
-        parts.append("Reasoning: \(tokenCountString(Double(r)))")
-    }
-    return parts.joined(separator: " · ")
-}
 
 /// B4: Build accessibility label for a model row with token components.
 func formatModelAccessibilityLabel(modelName: String, mu: ModelUsage, reasoning: Int? = nil) -> String {
