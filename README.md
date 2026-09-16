@@ -125,12 +125,14 @@ Measured on the fix (`fix/b6-findings@1a1f37b`, landed as `622c71d…`; the
 machine verdict record is the `checks.json` attached to kanban task
 `t_9933b8dc`): 66/66 screen-composited cells, 126 ICC→sRGB-converted text
 samples plus 36 supplementary glyph samples, 0 failures, `captureMethod:
-screen-composited`. Both reset transitions were captured on a single process
-and window per appearance, and neither announced nor displayed the stale
+screen-composited`. Both reset transitions were captured by periodic probing
+on a single process and window per appearance (same process and window
+throughout, no recollection), and neither announced nor displayed the stale
 percentage.
 
 **What this does not cover:** measured at the Default reading size only;
-native AX enumeration, not VoiceOver speech traversal; Light and Dark
+native AX enumeration, not VoiceOver speech traversal; probe continuity
+sampled approximately every 4 s rather than continuous video; Light and Dark
 appearances on three owned backdrops (255/128/32) only. The 44 pt timing
 column now wraps "Reset time unavailable" onto four lines — complete and
 readable without clipping or overlap, but taller than the normal row; that
