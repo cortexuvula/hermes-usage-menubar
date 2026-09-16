@@ -1303,13 +1303,6 @@ struct I2Tests {
                 TextToken(name: "dark primary #FFFFFF",     fg: (0xFF, 0xFF, 0xFF), bg: darkBg, minRatio: 4.5),
                 TextToken(name: "dark secondary #C7C7CC",   fg: (0xC7, 0xC7, 0xCC), bg: darkBg, minRatio: 4.5),
                 TextToken(name: "dark tertiary #B0B0B8",    fg: (0xB0, 0xB0, 0xB8), bg: darkBg, minRatio: 4.5),
-                // Scoped tokens
-                TextToken(name: "light scopedSupporting #383838", fg: (0x38, 0x38, 0x38), bg: lightBg, minRatio: 4.5),
-                TextToken(name: "dark scopedSupporting #A0A0A0",  fg: (0xA0, 0xA0, 0xA0), bg: darkBg, minRatio: 4.5),
-                TextToken(name: "light scopedWarning #602900",     fg: (0x60, 0x29, 0x00), bg: lightBg, minRatio: 4.5),
-                TextToken(name: "dark scopedWarning #FF9F0A",      fg: (0xFF, 0x9F, 0x0A), bg: darkBg, minRatio: 4.5),
-                TextToken(name: "light scopedCopySuccess #004512", fg: (0x00, 0x45, 0x12), bg: lightBg, minRatio: 4.5),
-                TextToken(name: "dark scopedCopySuccess #30D158",  fg: (0x30, 0xD1, 0x58), bg: darkBg, minRatio: 4.5),
             ]
             for t in textTokens {
                 let r = ratio(t.fg.0, t.fg.1, t.fg.2, t.bg.0, t.bg.1, t.bg.2)
@@ -1317,12 +1310,17 @@ struct I2Tests {
             }
 
             // Accent/graphic tokens — must clear 3:1 (non-text)
+            // scoped* tokens now style supplementary glyphs only (t_40db1924).
             struct GraphicToken { let name: String; let fg: (Double, Double, Double); let bg: (Double, Double, Double); let minRatio: Double }
             let graphicTokens: [GraphicToken] = [
                 GraphicToken(name: "light accent orange #B25E00", fg: (0xB2, 0x5E, 0x00), bg: lightBg, minRatio: 3.0),
                 GraphicToken(name: "light accent green #0A6B2E",  fg: (0x0A, 0x6B, 0x2E), bg: lightBg, minRatio: 3.0),
                 GraphicToken(name: "dark accent orange #FF9F0A",   fg: (0xFF, 0x9F, 0x0A), bg: darkBg, minRatio: 3.0),
                 GraphicToken(name: "dark accent green #30D158",    fg: (0x30, 0xD1, 0x58), bg: darkBg, minRatio: 3.0),
+                GraphicToken(name: "light scopedWarning #602900",     fg: (0x60, 0x29, 0x00), bg: lightBg, minRatio: 3.0),
+                GraphicToken(name: "dark scopedWarning #FF9F0A",      fg: (0xFF, 0x9F, 0x0A), bg: darkBg, minRatio: 3.0),
+                GraphicToken(name: "light scopedCopySuccess #004512", fg: (0x00, 0x45, 0x12), bg: lightBg, minRatio: 3.0),
+                GraphicToken(name: "dark scopedCopySuccess #30D158",  fg: (0x30, 0xD1, 0x58), bg: darkBg, minRatio: 3.0),
             ]
             for t in graphicTokens {
                 let r = ratio(t.fg.0, t.fg.1, t.fg.2, t.bg.0, t.bg.1, t.bg.2)

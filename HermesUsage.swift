@@ -1204,20 +1204,17 @@ struct ContentView: View {
                               : Color(red: 0x0A/255, green: 0x6B/255, blue: 0x2E/255)
     }
 
-    // MARK: - Contrast-scoped supporting/status text (t_98d271e9)
+    // MARK: - Contrast-scoped status glyphs (t_98d271e9, revised t_40db1924)
     // Two colour systems coexist by design (t_9b863783):
     //   • palette* (Primary/Secondary/Tertiary/Accent): general UI hierarchy
-    //   • scoped* (Supporting/Warning/CopySuccess): semantic status text only
-    // The scoped tokens predate the palette and are retained because they pass
-    // contrast (10.474:1 light, 6.375:1 dark) and are used exclusively for
-    // status messages. New UI should prefer palette*; scoped* is for status only.
+    //   • scoped* (Warning/CopySuccess): status glyph accents only — NEVER text
+    // Text is always neutral (paletteSecondary). Status colour rides a
+    // supplementary glyph beside the text, marked .accessibilityHidden(true)
+    // so screen readers hear the status once from the words, not twice.
+    // scopedSupportingText removed — its role duplicates paletteSecondary.
     // All ratios verified by contract test in Tests/I2ContractTests.swift.
     //
     // Opaque sRGB values per appearance; no opacity multiplier.
-    private var scopedSupportingText: Color {
-        colorScheme == .dark ? Color(red: 0xA0/255, green: 0xA0/255, blue: 0xA0/255)
-                              : Color(red: 0x38/255, green: 0x38/255, blue: 0x38/255)
-    }
     private var scopedWarningText: Color {
         colorScheme == .dark ? Color(red: 0xFF/255, green: 0x9F/255, blue: 0x0A/255)
                               : Color(red: 0x60/255, green: 0x29/255, blue: 0x00/255)
@@ -1560,9 +1557,15 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 6) {
             // F6: collection-status line ABOVE the metrics, qualified label
             if truncated {
-                Text("⚠️ Partial local collection — totals may omit older activity.")
-                    .font(.caption2)
-                    .foregroundStyle(scopedWarningText)
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(scopedWarningText)
+                        .accessibilityHidden(true)
+                    Text("Partial local collection — totals may omit older activity.")
+                        .font(.caption2)
+                        .foregroundStyle(paletteSecondary)
+                }
             }
             Label(truncated ? "Collected history (partial)" : "Collected history", systemImage: "clock")
                 .font(.subheadline.weight(.semibold))
@@ -1598,13 +1601,19 @@ struct ContentView: View {
             }
             // F6: qualified call-coverage warning matching the disclosure wording
             if unknownCalls > 0 {
-                Text(formatCallCoverageWarning(unknownCallRows: unknownCalls))
-                    .font(.caption2)
-                    .foregroundStyle(scopedWarningText)
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(scopedWarningText)
+                        .accessibilityHidden(true)
+                    Text(formatCallCoverageWarning(unknownCallRows: unknownCalls))
+                        .font(.caption2)
+                        .foregroundStyle(paletteSecondary)
+                }
             }
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
-                .foregroundStyle(scopedSupportingText)
+                .foregroundStyle(paletteSecondary)
             if rec.details?.totals?.estimatedUsd == nil || hasNilProviderCost(rec) {
                 Text("— Cost unavailable; not zero")
                     .font(.caption2)
@@ -1639,9 +1648,15 @@ struct ContentView: View {
                         }
 
                         if totals.estimatedUsd != nil && totals.actualUsd != nil {
-                            Text("⚠️ Estimate and actual are separate facts. Do not sum them.")
-                                .font(.caption2)
-                                .foregroundStyle(scopedWarningText)
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(scopedWarningText)
+                                    .accessibilityHidden(true)
+                                Text("Estimate and actual are separate facts. Do not sum them.")
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                            }
                         }
 
                         if let statusBreakdown = formatRowStatusBreakdown(totals.latestStatusRows) {
@@ -1790,10 +1805,16 @@ struct ContentView: View {
                 }
                 // R2: surface incomplete collection
                 if let details = rec.details, details.truncated == true {
-                    Text("⚠️ Partial collection")
-                        .font(.caption2)
-                        .foregroundStyle(scopedWarningText)
-                        .padding(.top, 2)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(scopedWarningText)
+                            .accessibilityHidden(true)
+                        Text("Partial collection")
+                            .font(.caption2)
+                            .foregroundStyle(paletteSecondary)
+                    }
+                    .padding(.top, 2)
                 }
             }
         } label: {
@@ -1861,10 +1882,16 @@ struct ContentView: View {
                 }
                 // R2: surface incomplete collection
                 if let details = rec.details, details.truncated == true {
-                    Text("⚠️ Partial collection")
-                        .font(.caption2)
-                        .foregroundStyle(scopedWarningText)
-                        .padding(.top, 2)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(scopedWarningText)
+                            .accessibilityHidden(true)
+                        Text("Partial collection")
+                            .font(.caption2)
+                            .foregroundStyle(paletteSecondary)
+                    }
+                    .padding(.top, 2)
                 }
             }
         } label: {
@@ -1896,7 +1923,7 @@ struct ContentView: View {
                         .foregroundStyle(palettePrimary)
                     Text("Account quotas are not yet observed. This does not indicate a plugin install or access issue.")
                         .font(.caption2)
-                        .foregroundStyle(scopedSupportingText)
+                        .foregroundStyle(paletteSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
@@ -1908,7 +1935,7 @@ struct ContentView: View {
                         .foregroundStyle(palettePrimary)
                     Text("All observed quotas are past their freshness window (\(Int(accountQuotaTTL / 60)) min). Refresh to re-observe.")
                         .font(.caption2)
-                        .foregroundStyle(scopedSupportingText)
+                        .foregroundStyle(paletteSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
@@ -1940,13 +1967,19 @@ struct ContentView: View {
                 if hasAccessRestriction(snap) {
                     // Only nous carries denied/member-cap-exceeded inside 600s window.
                     // Represent that asymmetry faithfully.
-                    Text(formatAccessStatus(snap.accessStatus, provider: snap.provider))
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(scopedWarningText)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(scopedWarningText)
+                            .accessibilityHidden(true)
+                        Text(formatAccessStatus(snap.accessStatus, provider: snap.provider))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(paletteSecondary)
+                    }
                 } else if snap.accessStatus == "allowed" {
                     Text("Allowed")
                         .font(.caption2)
-                        .foregroundStyle(scopedSupportingText)
+                        .foregroundStyle(paletteSecondary)
                 }
             }
 
@@ -1954,7 +1987,7 @@ struct ContentView: View {
             if !snap.plan.isEmpty {
                 Text(snap.plan)
                     .font(.caption2)
-                    .foregroundStyle(scopedSupportingText)
+                    .foregroundStyle(paletteSecondary)
                     .lineLimit(1)
             }
 
@@ -1973,7 +2006,7 @@ struct ContentView: View {
                                 .foregroundStyle(palettePrimary)
                             Text(formatResetTime(window.resetAt))
                                 .font(.caption2)
-                                .foregroundStyle(scopedSupportingText)
+                                .foregroundStyle(paletteSecondary)
                                 .frame(width: 44, alignment: .trailing)
                         }
                     }
@@ -1993,7 +2026,7 @@ struct ContentView: View {
                 // Status is "unavailable" — no windows, no USD
                 Text("Quota unavailable")
                     .font(.caption2)
-                    .foregroundStyle(scopedSupportingText)
+                    .foregroundStyle(paletteSecondary)
             }
 
             // Freshness indicator
@@ -2003,7 +2036,7 @@ struct ContentView: View {
                     .foregroundStyle(paletteTertiary)
                 Text(snapshotFreshness(snap))
                     .font(.caption2)
-                    .foregroundStyle(snapshotFreshness(snap) == "expired" ? scopedWarningText : scopedSupportingText)
+                    .foregroundStyle(paletteSecondary)
             }
         }
         .padding(.vertical, 4)
@@ -2112,10 +2145,16 @@ struct ContentView: View {
                 }
 
                 if rec.details?.truncated == true {
-                    Text("Partial collection — some workload history may be missing")
-                        .font(.caption2)
-                        .foregroundStyle(scopedWarningText)
-                        .padding(.top, 4)
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2)
+                            .foregroundStyle(scopedWarningText)
+                            .accessibilityHidden(true)
+                        Text("Partial collection — some workload history may be missing")
+                            .font(.caption2)
+                            .foregroundStyle(paletteSecondary)
+                    }
+                    .padding(.top, 4)
                 }
             }
         } label: {
@@ -2179,10 +2218,16 @@ struct ContentView: View {
         VStack(spacing: 2) {
             // R3: reserved feedback row above the timestamp — no overlay
             if clipboardCopied {
-                Text("✓ Copied to clipboard")
-                    .font(.caption2)
-                    .foregroundStyle(scopedCopySuccessText)
-                    .accessibilityLabel("Copied to clipboard")
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(scopedCopySuccessText)
+                        .accessibilityHidden(true)
+                    Text("Copied to clipboard")
+                        .font(.caption2)
+                        .foregroundStyle(paletteSecondary)
+                }
+                .accessibilityLabel("Copied to clipboard")
             } else if let error = clipboardError {
                 Text(error)
                     .font(.caption2)
@@ -2194,12 +2239,12 @@ struct ContentView: View {
                     if let t = model.updatedAt {
                         Text(footerAgeText(t))
                             .font(.caption2)
-                            .foregroundStyle(model.isStale || model.isDayStale ? scopedWarningText : scopedSupportingText)
+                            .foregroundStyle(paletteSecondary)
                             .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
                     } else {
                         Text("—")
                             .font(.caption2)
-                            .foregroundStyle(scopedSupportingText)
+                            .foregroundStyle(paletteSecondary)
                     }
                 }
                 Spacer()
