@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # No branch filter on push: CI runs on every pushed branch. History:
+  # merge/** branches sailed through unbuilt, then a docs/** push did the
+  # same — each enumerated pattern left a silent coverage hole for the next
+  # unanticipated branch name. The filter's failure mode is silent absence
+  # of coverage; runner minutes on stray refs are cheaper than that.
   push:
-    branches: [main, "fix/**", "feat/**", "merge/**"]
   pull_request:
 
 jobs:
