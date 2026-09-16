@@ -14,6 +14,109 @@ panel with a SwiftUI menu bar app.
 - Auto-refresh every 15 minutes + manual Refresh button
 - Everything is local: reads `~/.hermes/state.db` (and `~/.hermes/profiles/*/state.db`),
   no network, no credentials
+- Accounts/quota section: per-provider quota windows or USD credit, reset time,
+  and freshness — or an honest empty state when no snapshot is available
+
+## Panel appearance and contrast
+
+The popover uses opaque, appearance-specific backgrounds: light `#F2F2F2`
+(`[242,242,242]`), dark `#1E1E1E` (`[30,30,30]`). The previous translucent
+material made every contrast ratio depend on the desktop behind the panel;
+on a real composite (a dark panel over a bright desktop) no dark or mid text
+at any reachable hue could hit 4.5:1. Opaque backgrounds are what make stable
+contrast guarantees possible — composited measurements land exactly on the
+authored sRGB values.
+
+### Text palette
+
+Neutral text colours, measured on their own opaque backgrounds:
+
+| Tier | Light | Contrast | Dark | Contrast |
+|---|---|---|---|---|
+| Primary | `#1D1D1F` | 15.034:1 | `#FFFFFF` | 16.671:1 |
+| Secondary | `#5A5A60` | 6.118:1 | `#C7C7CC` | 9.899:1 |
+| Tertiary | `#6E6E73` | 4.530:1 | `#B0B0B8` | 7.739:1 |
+
+Accents are per-appearance and graphic-only — never used as text colour:
+
+| Purpose | Light | Contrast | Dark | Contrast |
+|---|---|---|---|---|
+| Warning / caution | `#B25E00` | 4.174:1 (3:1 non-text ✓) | `#FF9F0A` | 8.110:1 |
+| Success / healthy | `#0A6B2E` | 5.945:1 | `#30D158` | 8.246:1 |
+
+Status colour is carried on supplementary glyphs that are hidden from
+VoiceOver (accessibility-element set to `false`). The status is announced
+once, from the words. Colour is supplementary; the words are the message.
+
+### Footer and warning wording
+
+The bare em dash that previously stood alone in the footer was replaced with
+"Not updated". The dash's 1 px stroke reached only ~70% of its authored
+colour at 1×, rendering 3.1964:1 where the authored value is 6.118:1. The
+⚠️ emoji previously embedded in the call-coverage warning text was removed,
+leaving a single decorative, AX-hidden glyph as the only warning marker.
+
+### Text size
+
+The app renders at fixed type sizes and does not follow the macOS preferred
+reading size. macOS exposes no public API for menu bar apps to read or
+observe the user's preferred reading size; Apple's own `dynamicTypeSize`
+documentation states that on macOS the value cannot be changed by users and
+does not affect text size.
+
+## Verification (candidate ca9030f)
+
+Fresh native screen-composited verification, bound to `candidateSha ca9030f…`
+and executable `dad40c1d…`; verdict record at
+`candidate-ca9030f-opaque-evidence/checks.json`.
+
+| Category | Samples | Failures |
+|---|---|---|
+| Required cells | 54 / 54 | 0 |
+| ICC→sRGB-converted text samples | 96 | 0 |
+| Supplementary glyph samples | 36 | 0 |
+
+Minimum ratio across all samples: **4.5350:1**. Footer region: 6.1180:1
+light / 9.8993:1 dark, identical across three backdrops.
+
+**What this does not cover:** no VoiceOver speech traversal was performed;
+this is not whole-app WCAG conformance; native tooltip visuals were not
+measured; the accounts/quota section's populated states were outside the
+measured matrix (nine empty/subset states were measured: overview, totals,
+models, providers, workloads, feedback, fallback, noStores, stale).
+
+## Accounts / quota section
+
+The accounts/quota section shows per-provider quota windows or USD credit
+with reset time and freshness. When no quota snapshot is available, the
+section renders an honest empty state. The empty state means *no quota
+snapshot is available* — not that the plugin is uninstalled, and not that
+access was denied. A "denied" status appears only as an explicit exported
+status from the companion plugin.
+
+Observations carry a 600 s TTL while the collector runs every 900 s, so the
+UI expires them independently while the panel is open. The ordinary Refresh
+button rereads local files only and never silently opts into network or
+credential access.
+
+The companion export plugin (`hermes-usage-export`) is not installed on this
+machine, which is why the section currently shows its empty state.
+
+## Known-open defects
+
+Two review findings ship as code with their fix pending (tracked in `t_72bea24b`):
+
+1. **Nil `resetAt` renders "—"** where the producer means *timing
+   unavailable*. The collector retains `reset is None` windows as valid
+   data, so nil is not the same as "no reset scheduled". The display
+   currently conflates the two.
+
+2. **Stale allowance during window crossing.** A quota window that crosses
+   its `resetAt` while the panel is open can present a stale allowance as
+   current until the next collection cycle runs.
+
+Both are latent today because no snapshot export is installed on this
+machine. Neither is fixed.
 
 ## Build
 
@@ -55,8 +158,9 @@ rm ~/Library/LaunchAgents/ca.andrehugo.hermes-usage.plist
   collector directly via `/usr/bin/python3 -B ... --force`.
 - Quota export (`hermes-usage-export`) is a separate, optional Hermes plugin
   (`hermes plugins install <repo>#hermes-usage-export`); the collector includes
-  any exported `accounts` observations in its JSON, but this app's UI does not
-  render them yet — it shows local usage only.
+  any exported `accounts` observations in its JSON. The app now renders
+  per-provider quota windows or USD credit when a snapshot is available; see
+  "Accounts / quota section" above.
 - Numbers shown are "device" scope: they sum across all profiles' stores on this
   machine (matching the upstream collector's semantics), not per-profile.
 - Daily attribution is estimated from assistant-message activity (same as upstream).
