@@ -1178,8 +1178,48 @@ struct I2Tests {
             expect(formatResetTime(1726400030, now: now) == "<1m", "<1min → '<1m'")
             expect(formatResetTime(1726407200, now: now) == "in 2h", "2h → 'in 2h'")
             expect(formatResetTime(1726572800, now: now) == "in 2d", "2d → 'in 2d'")
-            expect(formatResetTime(nil, now: now) == "—", "nil → em dash")
-            expect(formatResetTime(1726399900, now: now) == "now", "past reset → 'now'")
+            expect(formatResetTime(nil, now: now) == "Reset time unavailable", "nil → Reset time unavailable")
+            expect(formatResetTime(1726399900, now: now) == "reset passed", "past reset → 'reset passed'")
+        }
+
+        print("B6: isWindowResetPassed — detects expired windows")
+        do {
+            // Window with resetAt in the future
+            let futureWindow = AccountWindow(label: "5h", usedPercent: 50, remainingPercent: 50, resetAt: 1726400600)
+            let now = Date(timeIntervalSince1970: 1726400000)
+            expect(isWindowResetPassed(futureWindow, now: now) == false, "future reset → not passed")
+
+            // Window with resetAt in the past
+            let pastWindow = AccountWindow(label: "5h", usedPercent: 75, remainingPercent: 25, resetAt: 1726400000)
+            let laterNow = Date(timeIntervalSince1970: 1726400600)
+            expect(isWindowResetPassed(pastWindow, now: laterNow) == true, "past reset → passed")
+
+            // Window with nil resetAt
+            let nilWindow = AccountWindow(label: "daily", usedPercent: 60, remainingPercent: 40, resetAt: nil)
+            expect(isWindowResetPassed(nilWindow, now: laterNow) == false, "nil reset → not passed")
+
+            // Window exactly at resetAt boundary
+            let exactWindow = AccountWindow(label: "5h", usedPercent: 80, remainingPercent: 20, resetAt: 1726400000)
+            let exactNow = Date(timeIntervalSince1970: 1726400000)
+            expect(isWindowResetPassed(exactWindow, now: exactNow) == true, "exact boundary → passed (>= not >)")
+        }
+
+        print("B6: window crossing resetAt without recollection — stale percentage not shown")
+        do {
+            // Simulate a window that was valid at collection but crosses resetAt while popover is open
+            let collectionTime = Date(timeIntervalSince1970: 1726400000)
+            let window = AccountWindow(label: "5h", usedPercent: 75.5, remainingPercent: 24.5, resetAt: 1726400300)
+
+            // Before reset: should show percentage
+            expect(isWindowResetPassed(window, now: collectionTime) == false, "before reset: not passed")
+            expect(formatResetTime(window.resetAt, now: collectionTime) == "in 5m", "before reset: 'in 5m'")
+
+            // After reset (no recollection, same decoded copy): should NOT show stale 24.5%
+            let postResetTime = Date(timeIntervalSince1970: 1726400600)
+            expect(isWindowResetPassed(window, now: postResetTime) == true, "after reset: passed")
+            expect(formatResetTime(window.resetAt, now: postResetTime) == "reset passed", "after reset: 'reset passed'")
+            // The UI rendering logic checks isWindowResetPassed and shows "reset passed — awaiting re-observation"
+            // instead of formatPercent(window.remainingPercent), preventing stale allowance display
         }
 
         print("B6: formatPercent — integer and decimal formatting")

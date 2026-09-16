@@ -294,12 +294,18 @@ func snapshotFreshness(_ snap: AccountSnapshot, now: Date = Date()) -> String {
 }
 
 /// B6: Format a reset time as a relative label.
-/// Returns "in Nm", "in Nh", or "—" if no reset scheduled.
+/// Returns "in Nm", "in Nh", "reset passed" if past resetAt, or
+/// "Reset time unavailable" if resetAt is nil.
+///
+/// Nil meaning (per quota_io.py): `if reset is None or reset > now: clean.append(...)`
+/// retains windows with `reset is None` as valid observations. Nil therefore means
+/// *timing data is missing*, not that no reset is scheduled. We render an explicit
+/// "unavailable" label rather than an em dash that could imply certainty.
 func formatResetTime(_ resetAt: Double?, now: Date = Date()) -> String {
-    guard let resetAt = resetAt else { return "—" }
+    guard let resetAt = resetAt else { return "Reset time unavailable" }
     let nowEpoch = now.timeIntervalSince1970
     let remaining = resetAt - nowEpoch
-    if remaining <= 0 { return "now" }
+    if remaining <= 0 { return "reset passed" }
     if remaining < 3600 {
         let mins = Int(remaining / 60)
         return mins == 0 ? "<1m" : "in \(mins)m"
@@ -310,6 +316,16 @@ func formatResetTime(_ resetAt: Double?, now: Date = Date()) -> String {
     }
     let days = Int(remaining / 86400)
     return "in \(days)d"
+}
+
+/// B6: True when a window's resetAt has passed (reset is non-nil and <= now).
+/// The producer drops `reset <= now` windows at collection time, but the UI holds
+/// its own decoded copy — a window valid at collection can cross resetAt while the
+/// popover stays open. Callers must not present the old remaining% as current when
+/// this returns true.
+func isWindowResetPassed(_ window: AccountWindow, now: Date = Date()) -> Bool {
+    guard let resetAt = window.resetAt else { return false }
+    return now.timeIntervalSince1970 >= resetAt
 }
 
 /// B6: Format a percentage as "N%" with one decimal if needed.
@@ -1996,18 +2012,31 @@ struct ContentView: View {
                 if !snap.windows.isEmpty {
                     // Show quota windows (usedPercent, remainingPercent, resetAt)
                     ForEach(Array(snap.windows.enumerated()), id: \.offset) { _, window in
-                        HStack {
-                            Text(window.label)
-                                .font(.caption2)
-                                .foregroundStyle(paletteSecondary)
-                            Spacer()
-                            Text(formatPercent(window.remainingPercent))
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(palettePrimary)
-                            Text(formatResetTime(window.resetAt))
-                                .font(.caption2)
-                                .foregroundStyle(paletteSecondary)
-                                .frame(width: 44, alignment: .trailing)
+                        if isWindowResetPassed(window) {
+                            // Window crossed resetAt while popover was open — don't show stale %
+                            HStack {
+                                Text(window.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                                Spacer()
+                                Text("reset passed — awaiting re-observation")
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteTertiary)
+                            }
+                        } else {
+                            HStack {
+                                Text(window.label)
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                                Spacer()
+                                Text(formatPercent(window.remainingPercent))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(palettePrimary)
+                                Text(formatResetTime(window.resetAt))
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                                    .frame(width: 44, alignment: .trailing)
+                            }
                         }
                     }
                 } else if let usd = snap.remainingUsd, snap.currency == "USD" {
@@ -2056,7 +2085,15 @@ struct ContentView: View {
         if snap.available {
             if !snap.windows.isEmpty {
                 for window in snap.windows {
-                    parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, resets \(formatResetTime(window.resetAt))")
+                    if isWindowResetPassed(window) {
+                        // Reset passed without recollection — don't announce stale allowance
+                        parts.append("\(window.label) reset passed, awaiting re-observation")
+                    } else if window.resetAt == nil {
+                        // Timing data missing — separate phrasing from the visual label
+                        parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, reset time unavailable")
+                    } else {
+                        parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, resets \(formatResetTime(window.resetAt))")
+                    }
                 }
             } else if let usd = snap.remainingUsd, snap.currency == "USD" {
                 parts.append("\(compactCost(usd)) remaining credit")
