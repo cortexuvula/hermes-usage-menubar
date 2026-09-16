@@ -328,6 +328,26 @@ func isWindowResetPassed(_ window: AccountWindow, now: Date = Date()) -> Bool {
     return now.timeIntervalSince1970 >= resetAt
 }
 
+/// B6: Compose the per-window accessibility announcement for a quota window.
+/// Second consumer of formatPercent/formatResetTime alongside the visual row;
+/// extracted from accountAccessibilityLabel so the "no stale percentage in the
+/// AX announcement" rule is enforced by tests (t_d5fa34be).
+///
+/// Branch order mirrors the visual path: a window whose resetAt crossed while
+/// the popover was open must never announce its old remaining%. Strings are
+/// byte-identical to the inline versions they replace.
+func accountWindowAnnouncement(_ window: AccountWindow, now: Date = Date()) -> String {
+    if isWindowResetPassed(window, now: now) {
+        // Reset passed without recollection — don't announce stale allowance
+        return "\(window.label) reset passed, awaiting re-observation"
+    } else if window.resetAt == nil {
+        // Timing data missing — separate phrasing from the visual label
+        return "\(window.label) \(formatPercent(window.remainingPercent)) remaining, reset time unavailable"
+    } else {
+        return "\(window.label) \(formatPercent(window.remainingPercent)) remaining, resets \(formatResetTime(window.resetAt, now: now))"
+    }
+}
+
 /// B6: Format a percentage as "N%" with one decimal if needed.
 func formatPercent(_ p: Double) -> String {
     if p == floor(p) {
@@ -2085,15 +2105,7 @@ struct ContentView: View {
         if snap.available {
             if !snap.windows.isEmpty {
                 for window in snap.windows {
-                    if isWindowResetPassed(window) {
-                        // Reset passed without recollection — don't announce stale allowance
-                        parts.append("\(window.label) reset passed, awaiting re-observation")
-                    } else if window.resetAt == nil {
-                        // Timing data missing — separate phrasing from the visual label
-                        parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, reset time unavailable")
-                    } else {
-                        parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, resets \(formatResetTime(window.resetAt))")
-                    }
+                    parts.append(accountWindowAnnouncement(window))
                 }
             } else if let usd = snap.remainingUsd, snap.currency == "USD" {
                 parts.append("\(compactCost(usd)) remaining credit")

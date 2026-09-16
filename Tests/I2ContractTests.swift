@@ -1222,6 +1222,35 @@ struct I2Tests {
             // instead of formatPercent(window.remainingPercent), preventing stale allowance display
         }
 
+        print("B6: accountWindowAnnouncement — AX strings for all three branches (t_d5fa34be)")
+        do {
+            let now = Date(timeIntervalSince1970: 1726400000)
+
+            // Branch 1: crossed reset (isWindowResetPassed true) — percentage must be absent
+            let crossedWindow = AccountWindow(label: "5h", usedPercent: 75.5, remainingPercent: 24.5, resetAt: 1726400300)
+            let postResetNow = Date(timeIntervalSince1970: 1726400600)
+            let crossed = accountWindowAnnouncement(crossedWindow, now: postResetNow)
+            expect(crossed == "5h reset passed, awaiting re-observation", "crossed reset → '<label> reset passed, awaiting re-observation'")
+            expect(!crossed.contains("24.5%"), "crossed reset → no stale percentage in AX announcement")
+            expect(!crossed.contains("%"), "crossed reset → no '%' anywhere in AX announcement")
+
+            // Branch 2: nil resetAt — percentage present, reset time unavailable
+            let nilWindow = AccountWindow(label: "daily", usedPercent: 60, remainingPercent: 40, resetAt: nil)
+            let nilMsg = accountWindowAnnouncement(nilWindow, now: now)
+            expect(nilMsg == "daily 40% remaining, reset time unavailable", "nil resetAt → '<label> N% remaining, reset time unavailable'")
+
+            // Branch 3: normal in-window — percentage plus relative reset time
+            let normalWindow = AccountWindow(label: "weekly", usedPercent: 62.3, remainingPercent: 37.7, resetAt: 1726400300)
+            let normalMsg = accountWindowAnnouncement(normalWindow, now: now)
+            expect(normalMsg == "weekly 37.7% remaining, resets in 5m", "normal → '<label> N% remaining, resets <formatResetTime>'")
+
+            // Same window flips branch as `now` crosses resetAt — no stale % once passed
+            expect(accountWindowAnnouncement(crossedWindow, now: now) == "5h 24.5% remaining, resets in 5m",
+                "same window pre-reset announces percentage")
+            expect(accountWindowAnnouncement(crossedWindow, now: postResetNow) == "5h reset passed, awaiting re-observation",
+                "same window post-reset drops percentage")
+        }
+
         print("B6: formatPercent — integer and decimal formatting")
         do {
             expect(formatPercent(0) == "0%", "0 → '0%'")
