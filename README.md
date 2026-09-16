@@ -85,7 +85,7 @@ measured; the accounts/quota section's populated states were outside this
 candidate's matrix (nine empty/subset states were measured: overview, totals,
 models, providers, workloads, feedback, fallback, noStores, stale) — the later
 fix candidate `1a1f37b` does measure populated quota states, see
-"Known-open defects" below.
+"Fixed findings (previously known-open)" below.
 
 ## Accounts / quota section
 
