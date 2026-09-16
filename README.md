@@ -134,9 +134,13 @@ percentage.
 native AX enumeration, not VoiceOver speech traversal; probe continuity
 sampled approximately every 4 s rather than continuous video; Light and Dark
 appearances on three owned backdrops (255/128/32) only. The 44 pt timing
-column now wraps "Reset time unavailable" onto four lines — complete and
-readable without clipping or overlap, but taller than the normal row; that
-layout concern is a non-blocking follow-up (`t_9e86fe02`), not a regression.
+column no longer wraps: with a nil `resetAt`, "Reset time unavailable"
+renders complete on **one line** beneath its label and percentage, on a
+**312×79** pt row against the normal row's **312×64** pt, with the percentage
+right edge unchanged (0 pt measured ink delta). Measured rendered ink for that
+line: 6.118:1 light / 9.899:1 dark. That layout landed as `62f7e52` on `main`
+and was verified natively before landing (`t_024a0553`: 7/7 required cells,
+0 failures), so the former wrap is no longer a follow-up.
 This machine still has no snapshot export installed, so the section renders
 its empty state here and the three populated states above were exercised from
 synthetic producer-shaped snapshots.
