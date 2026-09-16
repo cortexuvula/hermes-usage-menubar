@@ -81,9 +81,11 @@ light / 9.8993:1 dark, identical across three backdrops.
 
 **What this does not cover:** no VoiceOver speech traversal was performed;
 this is not whole-app WCAG conformance; native tooltip visuals were not
-measured; the accounts/quota section's populated states were outside the
-measured matrix (nine empty/subset states were measured: overview, totals,
-models, providers, workloads, feedback, fallback, noStores, stale).
+measured; the accounts/quota section's populated states were outside this
+candidate's matrix (nine empty/subset states were measured: overview, totals,
+models, providers, workloads, feedback, fallback, noStores, stale) — the later
+fix candidate `1a1f37b` does measure populated quota states, see
+"Known-open defects" below.
 
 ## Accounts / quota section
 
@@ -102,21 +104,40 @@ credential access.
 The companion export plugin (`hermes-usage-export`) is not installed on this
 machine, which is why the section currently shows its empty state.
 
-## Known-open defects
+## Fixed findings (previously known-open)
 
-Two review findings ship as code with their fix pending (tracked in `t_72bea24b`):
+Both findings that previously shipped as code with their fix pending
+(tracked in `t_72bea24b`) are now fixed, and the fix was verified natively
+before it landed:
 
-1. **Nil `resetAt` renders "—"** where the producer means *timing
-   unavailable*. The collector retains `reset is None` windows as valid
-   data, so nil is not the same as "no reset scheduled". The display
-   currently conflates the two.
-
+1. **Nil `resetAt`** renders "Reset time unavailable" instead of the bare
+   em dash. The collector retains `reset is None` windows as valid data, so
+   nil stays distinct from "no reset scheduled" — the wording, not a dash,
+   carries that distinction.
 2. **Stale allowance during window crossing.** A quota window that crosses
-   its `resetAt` while the panel is open can present a stale allowance as
-   current until the next collection cycle runs.
+   its `resetAt` while the panel is open now renders "reset passed — awaiting
+   re-observation" and omits the percentage entirely, in the visible row
+   **and** in its accessibility announcement (4.535:1 light / 7.739:1 dark
+   rendered ink for the crossed message; 6.118:1 / 9.899:1 for the timing
+   text).
 
-Both are latent today because no snapshot export is installed on this
-machine. Neither is fixed.
+Measured on the fix (`fix/b6-findings@1a1f37b`, landed as `622c71d…`; the
+machine verdict record is the `checks.json` attached to kanban task
+`t_9933b8dc`): 66/66 screen-composited cells, 126 ICC→sRGB-converted text
+samples plus 36 supplementary glyph samples, 0 failures, `captureMethod:
+screen-composited`. Both reset transitions were captured on a single process
+and window per appearance, and neither announced nor displayed the stale
+percentage.
+
+**What this does not cover:** measured at the Default reading size only;
+native AX enumeration, not VoiceOver speech traversal; Light and Dark
+appearances on three owned backdrops (255/128/32) only. The 44 pt timing
+column now wraps "Reset time unavailable" onto four lines — complete and
+readable without clipping or overlap, but taller than the normal row; that
+layout concern is a non-blocking follow-up (`t_9e86fe02`), not a regression.
+This machine still has no snapshot export installed, so the section renders
+its empty state here and the three populated states above were exercised from
+synthetic producer-shaped snapshots.
 
 ## Build
 
