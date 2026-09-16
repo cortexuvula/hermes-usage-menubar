@@ -1093,17 +1093,8 @@ final class UsageModel: ObservableObject {
 
 struct WeekBars: View {
     let days: [RecentDay]
-    @Environment(\.colorScheme) private var colorScheme
-
-    // Pinned neutral palette (t_dba69d81)
-    private var palettePrimary: Color {
-        colorScheme == .dark ? Color(red: 1.0, green: 1.0, blue: 1.0)
-                              : Color(red: 0x1D/255, green: 0x1D/255, blue: 0x1F/255)
-    }
-    private var paletteSecondary: Color {
-        colorScheme == .dark ? Color(red: 0xC7/255, green: 0xC7/255, blue: 0xCC/255)
-                              : Color(red: 0x5A/255, green: 0x5A/255, blue: 0x60/255)
-    }
+    let palettePrimary: Color
+    let paletteSecondary: Color
 
     private var maxTokens: Double {
         max(Double(days.map { $0.messageCount }.max() ?? 0), 1)
@@ -1194,10 +1185,10 @@ struct ContentView: View {
         colorScheme == .dark ? Color(red: 0xC7/255, green: 0xC7/255, blue: 0xCC/255)
                               : Color(red: 0x5A/255, green: 0x5A/255, blue: 0x60/255)
     }
-    // Tertiary: light #8E8E93 (4.52:1), dark #B0B0B8 (7.739:1 dimmer alt)
+    // Tertiary: light #6E6E73 (4.530:1), dark #B0B0B8 (7.739:1 dimmer alt)
     private var paletteTertiary: Color {
         colorScheme == .dark ? Color(red: 0xB0/255, green: 0xB0/255, blue: 0xB8/255)
-                              : Color(red: 0x8E/255, green: 0x8E/255, blue: 0x93/255)
+                              : Color(red: 0x6E/255, green: 0x6E/255, blue: 0x73/255)
     }
 
     // MARK: - Pinned accent palette (t_dba69d81)
@@ -1214,6 +1205,14 @@ struct ContentView: View {
     }
 
     // MARK: - Contrast-scoped supporting/status text (t_98d271e9)
+    // Two colour systems coexist by design (t_9b863783):
+    //   • palette* (Primary/Secondary/Tertiary/Accent): general UI hierarchy
+    //   • scoped* (Supporting/Warning/CopySuccess): semantic status text only
+    // The scoped tokens predate the palette and are retained because they pass
+    // contrast (10.474:1 light, 6.375:1 dark) and are used exclusively for
+    // status messages. New UI should prefer palette*; scoped* is for status only.
+    // All ratios verified by contract test in Tests/I2ContractTests.swift.
+    //
     // Opaque sRGB values per appearance; no opacity multiplier.
     private var scopedSupportingText: Color {
         colorScheme == .dark ? Color(red: 0xA0/255, green: 0xA0/255, blue: 0xA0/255)
@@ -1543,7 +1542,7 @@ struct ContentView: View {
             Label("Last 7 days — estimated tokens", systemImage: "calendar")
                 .font(.subheadline.weight(.semibold))
             if let days = rec.recentDays, !days.isEmpty {
-                WeekBars(days: days)
+                WeekBars(days: days, palettePrimary: palettePrimary, paletteSecondary: paletteSecondary)
             } else {
                 Text("No data")
                     .font(.caption)

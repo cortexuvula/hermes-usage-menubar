@@ -1268,6 +1268,68 @@ struct I2Tests {
         print("B6: TTL constant matches collector")
         expect(accountQuotaTTL == 600, "accountQuotaTTL = 600s (matches quota_io.py)")
 
+        // ---- Palette contrast invariant (t_9b863783) ----
+        // Recompute WCAG relative-sRGB luminance for every palette token
+        // against its appearance background. Text tokens must clear 4.5:1;
+        // accent/graphic tokens must clear 3:1 (non-text threshold).
+        // This replaces the former "assert ratio in a comment" approach.
+        print("Palette: WCAG contrast invariant — all tokens vs their backgrounds")
+        do {
+            func srgbToLinear(_ c: Double) -> Double {
+                let s = c / 255.0
+                return s <= 0.04045 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4)
+            }
+            func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double {
+                0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b)
+            }
+            func ratio(_ r1: Double, _ g1: Double, _ b1: Double, _ r2: Double, _ g2: Double, _ b2: Double) -> Double {
+                let L1 = luminance(r1, g1, b1)
+                let L2 = luminance(r2, g2, b2)
+                let lighter = max(L1, L2)
+                let darker = min(L1, L2)
+                return (lighter + 0.05) / (darker + 0.05)
+            }
+
+            // Backgrounds
+            let lightBg: (Double, Double, Double) = (0xF2, 0xF2, 0xF2)
+            let darkBg: (Double, Double, Double) = (0x1E, 0x1E, 0x1E)
+
+            // Text tokens — must clear 4.5:1
+            struct TextToken { let name: String; let fg: (Double, Double, Double); let bg: (Double, Double, Double); let minRatio: Double }
+            let textTokens: [TextToken] = [
+                TextToken(name: "light primary #1D1D1F",    fg: (0x1D, 0x1D, 0x1F), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "light secondary #5A5A60",  fg: (0x5A, 0x5A, 0x60), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "light tertiary #6E6E73",   fg: (0x6E, 0x6E, 0x73), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "dark primary #FFFFFF",     fg: (0xFF, 0xFF, 0xFF), bg: darkBg, minRatio: 4.5),
+                TextToken(name: "dark secondary #C7C7CC",   fg: (0xC7, 0xC7, 0xCC), bg: darkBg, minRatio: 4.5),
+                TextToken(name: "dark tertiary #B0B0B8",    fg: (0xB0, 0xB0, 0xB8), bg: darkBg, minRatio: 4.5),
+                // Scoped tokens
+                TextToken(name: "light scopedSupporting #383838", fg: (0x38, 0x38, 0x38), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "dark scopedSupporting #A0A0A0",  fg: (0xA0, 0xA0, 0xA0), bg: darkBg, minRatio: 4.5),
+                TextToken(name: "light scopedWarning #602900",     fg: (0x60, 0x29, 0x00), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "dark scopedWarning #FF9F0A",      fg: (0xFF, 0x9F, 0x0A), bg: darkBg, minRatio: 4.5),
+                TextToken(name: "light scopedCopySuccess #004512", fg: (0x00, 0x45, 0x12), bg: lightBg, minRatio: 4.5),
+                TextToken(name: "dark scopedCopySuccess #30D158",  fg: (0x30, 0xD1, 0x58), bg: darkBg, minRatio: 4.5),
+            ]
+            for t in textTokens {
+                let r = ratio(t.fg.0, t.fg.1, t.fg.2, t.bg.0, t.bg.1, t.bg.2)
+                expect(r >= t.minRatio, "\(t.name) = \(String(format: "%.3f", r)):1 >= 4.5:1")
+            }
+
+            // Accent/graphic tokens — must clear 3:1 (non-text)
+            struct GraphicToken { let name: String; let fg: (Double, Double, Double); let bg: (Double, Double, Double); let minRatio: Double }
+            let graphicTokens: [GraphicToken] = [
+                GraphicToken(name: "light accent orange #B25E00", fg: (0xB2, 0x5E, 0x00), bg: lightBg, minRatio: 3.0),
+                GraphicToken(name: "light accent green #0A6B2E",  fg: (0x0A, 0x6B, 0x2E), bg: lightBg, minRatio: 3.0),
+                GraphicToken(name: "dark accent orange #FF9F0A",   fg: (0xFF, 0x9F, 0x0A), bg: darkBg, minRatio: 3.0),
+                GraphicToken(name: "dark accent green #30D158",    fg: (0x30, 0xD1, 0x58), bg: darkBg, minRatio: 3.0),
+            ]
+            for t in graphicTokens {
+                let r = ratio(t.fg.0, t.fg.1, t.fg.2, t.bg.0, t.bg.1, t.bg.2)
+                expect(r >= t.minRatio, "\(t.name) = \(String(format: "%.3f", r)):1 >= 3:1 (graphic)")
+            }
+        }
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
