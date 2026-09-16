@@ -1093,6 +1093,17 @@ final class UsageModel: ObservableObject {
 
 struct WeekBars: View {
     let days: [RecentDay]
+    @Environment(\.colorScheme) private var colorScheme
+
+    // Pinned neutral palette (t_dba69d81)
+    private var palettePrimary: Color {
+        colorScheme == .dark ? Color(red: 1.0, green: 1.0, blue: 1.0)
+                              : Color(red: 0x1D/255, green: 0x1D/255, blue: 0x1F/255)
+    }
+    private var paletteSecondary: Color {
+        colorScheme == .dark ? Color(red: 0xC7/255, green: 0xC7/255, blue: 0xCC/255)
+                              : Color(red: 0x5A/255, green: 0x5A/255, blue: 0x60/255)
+    }
 
     private var maxTokens: Double {
         max(Double(days.map { $0.messageCount }.max() ?? 0), 1)
@@ -1108,7 +1119,7 @@ struct WeekBars: View {
                 VStack(spacing: 3) {
                     Text(compactTokens(Double(day.messageCount)))
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(paletteSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                         .accessibilityHidden(true)
@@ -1118,7 +1129,7 @@ struct WeekBars: View {
                         .accessibilityHidden(true)
                     Text(dayLabel(day.date))
                         .font(.caption.weight(isToday(day.date) ? .bold : .regular))
-                        .foregroundStyle(isToday(day.date) ? Color.primary : Color.secondary)
+                        .foregroundStyle(isToday(day.date) ? palettePrimary : paletteSecondary)
                         .accessibilityHidden(true)
                 }
                 .frame(maxWidth: .infinity)
@@ -1164,17 +1175,57 @@ struct ContentView: View {
     @State private var clipboardError: String?
     @State private var feedbackTimer: DispatchWorkItem?
 
-    // Contrast-scoped supporting/status text (t_98d271e9). Opaque sRGB values
-    // per appearance; no opacity multiplier. See CONTRAST-SCOPE.md.
+    // MARK: - Opaque appearance-specific background (t_dba69d81)
+    // Pinned palette: opaque backgrounds remove wallpaper dependence.
+    // Light: #F2F2F2, Dark: #1E1E1E
+    private var panelBackground: Color {
+        colorScheme == .dark ? Color(red: 0x1E/255, green: 0x1E/255, blue: 0x1E/255)
+                              : Color(red: 0xF2/255, green: 0xF2/255, blue: 0xF2/255)
+    }
+
+    // MARK: - Pinned neutral palette (t_dba69d81)
+    // Primary: light #1D1D1F (15.034:1), dark #FFFFFF (16.671:1)
+    private var palettePrimary: Color {
+        colorScheme == .dark ? Color(red: 1.0, green: 1.0, blue: 1.0)
+                              : Color(red: 0x1D/255, green: 0x1D/255, blue: 0x1F/255)
+    }
+    // Secondary: light #5A5A60 (6.118:1), dark #C7C7CC (9.899:1)
+    private var paletteSecondary: Color {
+        colorScheme == .dark ? Color(red: 0xC7/255, green: 0xC7/255, blue: 0xCC/255)
+                              : Color(red: 0x5A/255, green: 0x5A/255, blue: 0x60/255)
+    }
+    // Tertiary: light #8E8E93 (4.52:1), dark #B0B0B8 (7.739:1 dimmer alt)
+    private var paletteTertiary: Color {
+        colorScheme == .dark ? Color(red: 0xB0/255, green: 0xB0/255, blue: 0xB8/255)
+                              : Color(red: 0x8E/255, green: 0x8E/255, blue: 0x93/255)
+    }
+
+    // MARK: - Pinned accent palette (t_dba69d81)
+    // Accents are per-appearance. Never share hex across appearances.
+    // Orange: light #B25E00 (graphic only, 3:1 ✓), dark #FF9F0A (8.110:1)
+    private var paletteAccentOrange: Color {
+        colorScheme == .dark ? Color(red: 0xFF/255, green: 0x9F/255, blue: 0x0A/255)
+                              : Color(red: 0xB2/255, green: 0x5E/255, blue: 0x00/255)
+    }
+    // Green: light #0A6B2E (5.945:1), dark #30D158 (8.246:1)
+    private var paletteAccentGreen: Color {
+        colorScheme == .dark ? Color(red: 0x30/255, green: 0xD1/255, blue: 0x58/255)
+                              : Color(red: 0x0A/255, green: 0x6B/255, blue: 0x2E/255)
+    }
+
+    // MARK: - Contrast-scoped supporting/status text (t_98d271e9)
+    // Opaque sRGB values per appearance; no opacity multiplier.
     private var scopedSupportingText: Color {
         colorScheme == .dark ? Color(red: 0xA0/255, green: 0xA0/255, blue: 0xA0/255)
                               : Color(red: 0x38/255, green: 0x38/255, blue: 0x38/255)
     }
     private var scopedWarningText: Color {
-        colorScheme == .dark ? .orange : Color(red: 0x60/255, green: 0x29/255, blue: 0x00/255)
+        colorScheme == .dark ? Color(red: 0xFF/255, green: 0x9F/255, blue: 0x0A/255)
+                              : Color(red: 0x60/255, green: 0x29/255, blue: 0x00/255)
     }
     private var scopedCopySuccessText: Color {
-        colorScheme == .dark ? .green : Color(red: 0x00/255, green: 0x45/255, blue: 0x12/255)
+        colorScheme == .dark ? Color(red: 0x30/255, green: 0xD1/255, blue: 0x58/255)
+                              : Color(red: 0x00/255, green: 0x45/255, blue: 0x12/255)
     }
 
     var body: some View {
@@ -1199,6 +1250,7 @@ struct ContentView: View {
             footer
         }
         .frame(width: 340)
+        .background(panelBackground)
     }
 
     /// A3/A6: route the main content area to the correct state-specific view.
@@ -1252,7 +1304,7 @@ struct ContentView: View {
             }
             Text("This Mac · All profiles")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
@@ -1263,7 +1315,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(paletteAccentOrange)
                 Text("Showing saved results; update failed")
                     .font(.caption.weight(.semibold))
                 Spacer()
@@ -1272,7 +1324,7 @@ struct ContentView: View {
             }
             Text(err)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1287,13 +1339,13 @@ struct ContentView: View {
                 .font(.callout.weight(.semibold))
             Text("Hermes Agent hasn't created any session stores on this Mac yet.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(diagnostic)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(paletteSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
@@ -1301,7 +1353,7 @@ struct ContentView: View {
             } label: {
                 Text("Details")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
             }
             Button("Retry") { model.refresh() }
                 .controlSize(.small)
@@ -1315,16 +1367,16 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Couldn't read local usage", systemImage: "exclamationmark.triangle")
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(.orange)
+                .foregroundStyle(paletteAccentOrange)
             Text("Session stores exist but couldn't be read. This is usually temporary.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(diagnostic)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(paletteSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
@@ -1332,7 +1384,7 @@ struct ContentView: View {
             } label: {
                 Text("Details")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
             }
             Button("Retry") { model.refresh() }
                 .controlSize(.small)
@@ -1352,7 +1404,7 @@ struct ContentView: View {
             // F1: diagnostic as visible body text — not truncated, not hidden
             Text(diagnostic)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Button("Retry") { model.refresh() }
@@ -1367,16 +1419,16 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Usage format not recognized", systemImage: "exclamationmark.triangle")
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(.orange)
+                .foregroundStyle(paletteAccentOrange)
             Text("The collector returned valid JSON, but it doesn't match the expected Hermes usage format.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(diagnostic)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(paletteSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
@@ -1384,7 +1436,7 @@ struct ContentView: View {
             } label: {
                 Text("Details")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
             }
             Button("Retry") { model.refresh() }
                 .controlSize(.small)
@@ -1399,7 +1451,7 @@ struct ContentView: View {
                 .font(.callout.weight(.semibold))
             Text("Run a Hermes session on this Mac, then hit Refresh.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("~/.hermes/state.db")
@@ -1407,12 +1459,12 @@ struct ContentView: View {
                     Text("Scope: this device, all profiles · reads local databases; a rare fallback path may create an empty file if a store vanishes mid-scan")
                 }
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
                 .padding(.leading, 4)
             } label: {
                 Text("Stores being checked")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
             }
         }
         .padding(.vertical, 8)
@@ -1485,7 +1537,7 @@ struct ContentView: View {
             } else {
                 Text("No data")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(paletteSecondary)
             }
         }
     }
@@ -1522,7 +1574,7 @@ struct ContentView: View {
                 HStack {
                     Text("Total reasoning")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(paletteSecondary)
                     Spacer()
                     Text(tokenCountString(reasoning))
                         .font(.system(.callout, design: .rounded).weight(.semibold))
@@ -1547,7 +1599,7 @@ struct ContentView: View {
             if rec.details?.totals?.estimatedUsd == nil || hasNilProviderCost(rec) {
                 Text("— Cost unavailable; not zero")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(paletteSecondary)
                     .accessibilityLabel("Em-dash means cost unavailable; not zero")
             }
 
@@ -1561,7 +1613,7 @@ struct ContentView: View {
                                 .help(formatRecordedCost(estimated))
                             Text("Sum of provider-reported estimates; costs may be unreported by some providers.")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                         } else {
                             Text("Recorded estimate (USD): unavailable")
                                 .font(.caption2)
@@ -1574,32 +1626,32 @@ struct ContentView: View {
                                 .help(formatRecordedCost(actual))
                             Text("Sum of provider-reported actual costs; not invoice reconciliation.")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                         }
 
                         if totals.estimatedUsd != nil && totals.actualUsd != nil {
                             Text("⚠️ Estimate and actual are separate facts. Do not sum them.")
                                 .font(.caption2)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(paletteAccentOrange)
                         }
 
                         if let statusBreakdown = formatRowStatusBreakdown(totals.latestStatusRows) {
                             Text("Row status: \(statusBreakdown)")
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                             Text("Status counts describe observations, not coverage.")
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(paletteTertiary)
                         }
 
                         Text(formatCallAvailability(calls: totals.calls, unknownCallRows: totals.unknownCallRows))
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(paletteSecondary)
                     }
                     .padding(.vertical, 4)
                 }
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
             }
         }
     }
@@ -1618,7 +1670,7 @@ struct ContentView: View {
                 .monospacedDigit()
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(paletteSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 5)
@@ -1635,7 +1687,7 @@ struct ContentView: View {
             if rows.isEmpty {
                 Text("No model data")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(paletteSecondary)
             } else {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     let (modelName, totalTokens) = row
@@ -1650,7 +1702,7 @@ struct ContentView: View {
                             Spacer()
                             Text(compactTokens(Double(totalTokens)))
                                 .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                                 .help(exactTokens(totalTokens))
                         }
                         if let mu = mu {
@@ -1711,7 +1763,7 @@ struct ContentView: View {
                                 }
                             }
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(paletteSecondary)
                         }
                     }
                     .padding(.vertical, 1)
@@ -1764,7 +1816,7 @@ struct ContentView: View {
             if rows.isEmpty {
                 Text("No provider data")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(paletteSecondary)
             } else {
                 HStack {
                     Text("Provider")
@@ -1775,7 +1827,7 @@ struct ContentView: View {
                         .frame(width: 52, alignment: .trailing)
                 }
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(paletteTertiary)
                 .padding(.bottom, 2)
                 ForEach(Array(rowsWithCost.enumerated()), id: \.offset) { _, row in
                     let (providerName, providerUsage, costUsd) = row
@@ -1788,7 +1840,7 @@ struct ContentView: View {
                         Spacer()
                         Text(compactCost(costUsd))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(paletteSecondary)
                             .frame(width: 64, alignment: .trailing)
                             .help(costHelp(costUsd))
                         Text(compactTokens(Double(providerUsage.tokens ?? 0)))
@@ -1832,7 +1884,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("No quota snapshot available")
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(palettePrimary)
                     Text("Account quotas are not yet observed. This does not indicate a plugin install or access issue.")
                         .font(.caption2)
                         .foregroundStyle(scopedSupportingText)
@@ -1844,7 +1896,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Quota snapshots expired")
                         .font(.caption.weight(.medium))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(palettePrimary)
                     Text("All observed quotas are past their freshness window (\(Int(accountQuotaTTL / 60)) min). Refresh to re-observe.")
                         .font(.caption2)
                         .foregroundStyle(scopedSupportingText)
@@ -1874,7 +1926,7 @@ struct ContentView: View {
             HStack {
                 Text(accountProviderLabel(snap.provider))
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(palettePrimary)
                 Spacer()
                 if hasAccessRestriction(snap) {
                     // Only nous carries denied/member-cap-exceeded inside 600s window.
@@ -1905,11 +1957,11 @@ struct ContentView: View {
                         HStack {
                             Text(window.label)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                             Spacer()
                             Text(formatPercent(window.remainingPercent))
                                 .font(.caption2.monospacedDigit())
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(palettePrimary)
                             Text(formatResetTime(window.resetAt))
                                 .font(.caption2)
                                 .foregroundStyle(scopedSupportingText)
@@ -1921,11 +1973,11 @@ struct ContentView: View {
                     HStack {
                         Text("Remaining credit")
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(paletteSecondary)
                         Spacer()
                         Text(compactCost(usd))
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(palettePrimary)
                     }
                 }
             } else {
@@ -1939,7 +1991,7 @@ struct ContentView: View {
             HStack {
                 Text("Freshness:")
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
                 Text(snapshotFreshness(snap))
                     .font(.caption2)
                     .foregroundStyle(snapshotFreshness(snap) == "expired" ? scopedWarningText : scopedSupportingText)
@@ -1991,7 +2043,7 @@ struct ContentView: View {
             if tasks.isEmpty {
                 Text("No workload data")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(paletteSecondary)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     // F3: column headers so values have meaning
@@ -2006,42 +2058,42 @@ struct ContentView: View {
                             .frame(width: 50, alignment: .trailing)
                     }
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(paletteTertiary)
                     .padding(.bottom, 2)
 
                     ForEach(tasks, id: \.name) { task in
                         HStack {
                             Text(taskLabel(task.name))
                                 .font(.caption)
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(palettePrimary)
                             Spacer()
                             if let calls = task.calls {
                                 Text(compactTokens(Double(calls)))
                                     .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(paletteSecondary)
                                     .frame(width: 56, alignment: .trailing)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.7)
                             } else {
                                 Text("—")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(paletteSecondary)
                                     .frame(width: 56, alignment: .trailing)
                             }
                             if let tokens = task.tokens {
                                 Text(compactTokens(Double(tokens)))
                                     .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(paletteSecondary)
                                     .frame(width: 44, alignment: .trailing)
                             } else {
                                 Text("—")
                                     .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .foregroundStyle(paletteSecondary)
                                     .frame(width: 44, alignment: .trailing)
                             }
                             Text(compactCost(task.estimatedUsd))
                                 .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(paletteSecondary)
                                 .frame(width: 50, alignment: .trailing)
                                 .help(costHelp(task.estimatedUsd))
                         }
