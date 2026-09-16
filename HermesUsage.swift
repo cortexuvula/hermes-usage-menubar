@@ -1365,9 +1365,14 @@ struct ContentView: View {
     /// A3: stores exist but couldn't be read
     private func unreadableSection(_ diagnostic: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Couldn't read local usage", systemImage: "exclamationmark.triangle")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(paletteAccentOrange)
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(paletteAccentOrange)
+                    .accessibilityHidden(true)
+                Text("Couldn't read local usage")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(palettePrimary)
+            }
             Text("Session stores exist but couldn't be read. This is usually temporary.")
                 .font(.caption)
                 .foregroundStyle(paletteSecondary)
@@ -1417,9 +1422,14 @@ struct ContentView: View {
     /// A6: valid JSON but not a valid usage record
     private func unrecognizedSection(_ diagnostic: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Usage format not recognized", systemImage: "exclamationmark.triangle")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(paletteAccentOrange)
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(paletteAccentOrange)
+                    .accessibilityHidden(true)
+                Text("Usage format not recognized")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(palettePrimary)
+            }
             Text("The collector returned valid JSON, but it doesn't match the expected Hermes usage format.")
                 .font(.caption)
                 .foregroundStyle(paletteSecondary)
@@ -1632,7 +1642,7 @@ struct ContentView: View {
                         if totals.estimatedUsd != nil && totals.actualUsd != nil {
                             Text("⚠️ Estimate and actual are separate facts. Do not sum them.")
                                 .font(.caption2)
-                                .foregroundStyle(paletteAccentOrange)
+                                .foregroundStyle(scopedWarningText)
                         }
 
                         if let statusBreakdown = formatRowStatusBreakdown(totals.latestStatusRows) {
