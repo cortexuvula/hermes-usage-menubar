@@ -2043,6 +2043,38 @@ struct ContentView: View {
                                     .font(.caption2)
                                     .foregroundStyle(paletteTertiary)
                             }
+                        } else if window.resetAt == nil {
+                            // Producer retained a window with `reset is None`:
+                            // timing data is missing. The full sentence doesn't
+                            // fit the 44pt timing column; render it as a
+                            // supporting line at full row width instead of
+                            // letting it wrap four lines inside the column.
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(window.label)
+                                        .font(.caption2)
+                                        .foregroundStyle(paletteSecondary)
+                                    Spacer()
+                                    Text(formatPercent(window.remainingPercent))
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(palettePrimary)
+                                    // Nonsemantic 44pt reservation keeping this
+                                    // row's percentage right edge aligned with
+                                    // sibling rows (same 8pt Text/element gap as
+                                    // the normal branch's timing column — probe-
+                                    // measured). Explicitly zero-height, hidden
+                                    // from accessibility and inert to hits, so
+                                    // it adds no speech, help, focus or target.
+                                    Color.clear
+                                        .frame(width: 44, height: 0)
+                                        .accessibilityHidden(true)
+                                        .allowsHitTesting(false)
+                                }
+                                Text(formatResetTime(window.resetAt))
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         } else {
                             HStack {
                                 Text(window.label)
