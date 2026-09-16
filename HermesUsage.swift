@@ -20,6 +20,10 @@ struct UsageRecord: Codable {
     let modelUsage: [String: ModelUsage]?
     let providerUsage: [String: ProviderUsage]?
     let details: Details?
+    /// B6: Account quota snapshots from collector. Empty array means no
+    /// snapshot available (not that plugin is uninstalled or access denied).
+    /// Nullable to handle records from older collectors.
+    let accounts: [AccountSnapshot]?
 }
 
 struct RecentDay: Codable {
@@ -57,6 +61,37 @@ struct Details: Codable {
     let scope: String?
     let coverage: String?
     let dailyAttribution: String?
+}
+
+// MARK: - B6: Account quota snapshots
+
+/// B6: Per-provider quota window from collector's account snapshot.
+/// Mirrors quota_io.py window shape: {label, usedPercent, remainingPercent, resetAt}.
+struct AccountWindow: Codable {
+    let label: String
+    let usedPercent: Double
+    let remainingPercent: Double
+    let resetAt: Double?  // Unix timestamp, nil if no reset scheduled
+}
+
+/// B6: Account quota snapshot from collector.
+/// Mirrors quota_io.py record shape with TTL-based freshness (600s).
+/// Preserves distinct states: unknown, zero, unavailable, denied, expired.
+struct AccountSnapshot: Codable {
+    let schemaVersion: Int
+    let provider: String
+    let scope: String
+    let accountSelection: String
+    let fetchedAt: Double
+    let expiresAt: Double
+    let source: String
+    let plan: String
+    let windows: [AccountWindow]
+    let available: Bool
+    let status: String  // "observed" or "unavailable"
+    let accessStatus: String  // "unknown", "allowed", "denied", "member-cap-exceeded"
+    let remainingUsd: Double?  // Only for nous provider with currency="USD"
+    let currency: String?
 }
 
 /// Mirrors the collector's new_detail_bucket() for per-provider groups.
@@ -227,6 +262,94 @@ func formatSnapshotDay(_ date: Date) -> String {
 func aggregateReasoning(_ rec: UsageRecord) -> Int? {
     guard let r = rec.details?.totals?.reasoning, r > 0 else { return nil }
     return r
+}
+
+// MARK: - B6: Account quota helpers
+
+/// B6: TTL for account quota observations (seconds). Collector validates
+/// fetchedAt <= now < expiresAt <= fetchedAt + TTL, so this matches the
+/// collector's window. The UI uses this to expire observations independently
+/// while the menu is open.
+let accountQuotaTTL: TimeInterval = 600
+
+/// B6: Check if a snapshot is still fresh (within its TTL window).
+/// Uses the snapshot's own expiresAt, not a re-fetch — refresh must not
+/// extend observations or imply a provider fetch.
+func isSnapshotFresh(_ snap: AccountSnapshot, now: Date = Date()) -> Bool {
+    let nowEpoch = now.timeIntervalSince1970
+    return nowEpoch < snap.expiresAt
+}
+
+/// B6: Format the remaining time until a snapshot expires.
+/// Returns "fresh" if >5 min, "Nm" if <5 min, or "expired" if past TTL.
+func snapshotFreshness(_ snap: AccountSnapshot, now: Date = Date()) -> String {
+    let nowEpoch = now.timeIntervalSince1970
+    let remaining = snap.expiresAt - nowEpoch
+    if remaining <= 0 { return "expired" }
+    if remaining < 300 {  // <5 min
+        let mins = Int(remaining / 60)
+        return mins == 0 ? "<1m" : "\(mins)m"
+    }
+    return "fresh"
+}
+
+/// B6: Format a reset time as a relative label.
+/// Returns "in Nm", "in Nh", or "—" if no reset scheduled.
+func formatResetTime(_ resetAt: Double?, now: Date = Date()) -> String {
+    guard let resetAt = resetAt else { return "—" }
+    let nowEpoch = now.timeIntervalSince1970
+    let remaining = resetAt - nowEpoch
+    if remaining <= 0 { return "now" }
+    if remaining < 3600 {
+        let mins = Int(remaining / 60)
+        return mins == 0 ? "<1m" : "in \(mins)m"
+    }
+    if remaining < 86400 {
+        let hours = Int(remaining / 3600)
+        return "in \(hours)h"
+    }
+    let days = Int(remaining / 86400)
+    return "in \(days)d"
+}
+
+/// B6: Format a percentage as "N%" with one decimal if needed.
+func formatPercent(_ p: Double) -> String {
+    if p == floor(p) {
+        return "\(Int(p))%"
+    }
+    return String(format: "%.1f%%", p)
+}
+
+/// B6: Display label for a provider in the accounts section.
+/// Reuses the same mapping as providersSection for consistency.
+func accountProviderLabel(_ p: String) -> String {
+    switch p {
+    case "openai-codex": return "Codex"
+    case "anthropic": return "Anthropic"
+    case "nous": return "Nous"
+    case "openrouter": return "OpenRouter"
+    default: return p
+    }
+}
+
+/// B6: Format the access status for display.
+/// Only nous records carry denied/member-cap-exceeded inside the 600s window.
+/// Other providers always show "unknown" or "allowed" — represent that
+/// asymmetry faithfully rather than generalizing.
+func formatAccessStatus(_ status: String, provider: String) -> String {
+    switch status {
+    case "denied": return "Access denied"
+    case "member-cap-exceeded": return "Member cap exceeded"
+    case "allowed": return "Allowed"
+    case "unknown": return "—"
+    default: return "—"
+    }
+}
+
+/// B6: Check if a snapshot has an access restriction (denied or member-cap-exceeded).
+/// Only meaningful for nous provider per quota_io.py.
+func hasAccessRestriction(_ snap: AccountSnapshot) -> Bool {
+    return snap.accessStatus == "denied" || snap.accessStatus == "member-cap-exceeded"
 }
 
 // MARK: - F5: Provider cost helpers
@@ -1107,6 +1230,7 @@ struct ContentView: View {
                     totalsSection(rec)
                     modelsSection(rec)
                     providersSection(rec)
+                    accountsSection(rec)
                     workloadsSection(rec)
                 }
             }
@@ -1686,6 +1810,170 @@ struct ContentView: View {
             Label("Providers (\(total)) — bounded local history", systemImage: "server.rack")
                 .font(.subheadline.weight(.semibold))
         }
+    }
+
+    // MARK: - B6: Account quotas section
+
+    /// B6: Account quota section showing per-provider quota windows or USD credit.
+    /// Empty accounts array means no snapshot available (not that plugin is uninstalled
+    /// or access denied). Preserves distinct states: unknown, zero, unavailable,
+    /// denied, expired. Uses scoped contrast tokens to avoid reintroducing the
+    /// supporting-text contrast failure being fixed in t_98d271e9.
+    private func accountsSection(_ rec: UsageRecord) -> some View {
+        let accounts = rec.accounts ?? []
+        let freshAccounts = accounts.filter { isSnapshotFresh($0) }
+        let total = accounts.count
+
+        return DisclosureGroup {
+            if accounts.isEmpty {
+                // Empty accounts array: no quota snapshot available.
+                // NOT that plugin is uninstalled, NOT that access denied.
+                // Use neutral wording; reserve "denied" for explicit status.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No quota snapshot available")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text("Account quotas are not yet observed. This does not indicate a plugin install or access issue.")
+                        .font(.caption2)
+                        .foregroundStyle(scopedSupportingText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+            } else if freshAccounts.isEmpty {
+                // All snapshots expired (past 600s TTL).
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Quota snapshots expired")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text("All observed quotas are past their freshness window (\(Int(accountQuotaTTL / 60)) min). Refresh to re-observe.")
+                        .font(.caption2)
+                        .foregroundStyle(scopedSupportingText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+            } else {
+                // Render fresh snapshots with quota windows or USD credit.
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(freshAccounts.enumerated()), id: \.offset) { _, snap in
+                        accountSnapshotRow(snap)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        } label: {
+            Label("Account quotas (\(total)) — observed windows", systemImage: "checkmark.circle")
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+
+    /// B6: Render a single account snapshot row showing quota windows or USD credit,
+    /// reset time, and freshness. Exactly one caveat per combined row.
+    private func accountSnapshotRow(_ snap: AccountSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // Provider name and access status
+            HStack {
+                Text(accountProviderLabel(snap.provider))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                if hasAccessRestriction(snap) {
+                    // Only nous carries denied/member-cap-exceeded inside 600s window.
+                    // Represent that asymmetry faithfully.
+                    Text(formatAccessStatus(snap.accessStatus, provider: snap.provider))
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(scopedWarningText)
+                } else if snap.accessStatus == "allowed" {
+                    Text("Allowed")
+                        .font(.caption2)
+                        .foregroundStyle(scopedSupportingText)
+                }
+            }
+
+            // Plan name if present
+            if !snap.plan.isEmpty {
+                Text(snap.plan)
+                    .font(.caption2)
+                    .foregroundStyle(scopedSupportingText)
+                    .lineLimit(1)
+            }
+
+            // Quota windows or USD credit
+            if snap.available {
+                if !snap.windows.isEmpty {
+                    // Show quota windows (usedPercent, remainingPercent, resetAt)
+                    ForEach(Array(snap.windows.enumerated()), id: \.offset) { _, window in
+                        HStack {
+                            Text(window.label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatPercent(window.remainingPercent))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.primary)
+                            Text(formatResetTime(window.resetAt))
+                                .font(.caption2)
+                                .foregroundStyle(scopedSupportingText)
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                    }
+                } else if let usd = snap.remainingUsd, snap.currency == "USD" {
+                    // Show USD credit (only nous provider per quota_io.py)
+                    HStack {
+                        Text("Remaining credit")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(compactCost(usd))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.primary)
+                    }
+                }
+            } else {
+                // Status is "unavailable" — no windows, no USD
+                Text("Quota unavailable")
+                    .font(.caption2)
+                    .foregroundStyle(scopedSupportingText)
+            }
+
+            // Freshness indicator
+            HStack {
+                Text("Freshness:")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(snapshotFreshness(snap))
+                    .font(.caption2)
+                    .foregroundStyle(snapshotFreshness(snap) == "expired" ? scopedWarningText : scopedSupportingText)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accountAccessibilityLabel(snap))
+    }
+
+    /// B6: Format accessibility label for an account snapshot row.
+    /// Combines provider, access status, quota windows or USD, and freshness.
+    private func accountAccessibilityLabel(_ snap: AccountSnapshot) -> String {
+        var parts: [String] = [accountProviderLabel(snap.provider)]
+
+        if hasAccessRestriction(snap) {
+            parts.append(formatAccessStatus(snap.accessStatus, provider: snap.provider))
+        }
+
+        if snap.available {
+            if !snap.windows.isEmpty {
+                for window in snap.windows {
+                    parts.append("\(window.label) \(formatPercent(window.remainingPercent)) remaining, resets \(formatResetTime(window.resetAt))")
+                }
+            } else if let usd = snap.remainingUsd, snap.currency == "USD" {
+                parts.append("\(compactCost(usd)) remaining credit")
+            }
+        } else {
+            parts.append("Quota unavailable")
+        }
+
+        parts.append("Freshness: \(snapshotFreshness(snap))")
+
+        return parts.joined(separator: ", ")
     }
 
     // MARK: - B2: Workloads section

@@ -1037,6 +1037,237 @@ struct I2Tests {
             expect(!receipt.contains("synthetic-abc123"), "stale: excludes path components")
         }
 
+        // ---- B6: Account quota snapshots ----
+        print("B6: AccountSnapshot Codable — full record decodes")
+        do {
+            let json = """
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,
+             "accounts":[{"schemaVersion":1,"provider":"nous","scope":"platform","accountSelection":"auto",
+               "fetchedAt":1726400000,"expiresAt":1726400600,"source":"hermes-quota-plugin",
+               "plan":"pro","windows":[{"label":"5h window","usedPercent":45.2,"remainingPercent":54.8,"resetAt":1726418000}],
+               "available":true,"status":"observed","accessStatus":"allowed","remainingUsd":12.50,"currency":"USD"}]}
+            """
+            let rec = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            expect(rec?.accounts?.count == 1, "one account snapshot decoded")
+            let snap = rec?.accounts?.first
+            expect(snap?.provider == "nous", "provider = nous")
+            expect(snap?.scope == "platform", "scope = platform")
+            expect(snap?.windows.count == 1, "one window")
+            expect(snap?.windows.first?.label == "5h window", "window label")
+            expect(snap?.windows.first?.usedPercent == 45.2, "usedPercent = 45.2")
+            expect(snap?.windows.first?.remainingPercent == 54.8, "remainingPercent = 54.8")
+            expect(snap?.remainingUsd == 12.50, "remainingUsd = 12.50")
+            expect(snap?.currency == "USD", "currency = USD")
+            expect(snap?.available == true, "available = true")
+            expect(snap?.accessStatus == "allowed", "accessStatus = allowed")
+        }
+
+        print("B6: AccountSnapshot Codable — nil accounts (older collector)")
+        do {
+            let json = """
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true}
+            """
+            let rec = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            expect(rec?.accounts == nil, "nil accounts when field absent")
+        }
+
+        print("B6: AccountSnapshot Codable — empty array (no snapshots)")
+        do {
+            let json = """
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,"accounts":[]}
+            """
+            let rec = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            expect(rec?.accounts?.isEmpty == true, "empty array decodes as empty")
+        }
+
+        print("B6: AccountSnapshot Codable — forward-compatible (extra keys tolerated)")
+        do {
+            let json = """
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,
+             "accounts":[{"schemaVersion":1,"provider":"anthropic","scope":"platform","accountSelection":"auto",
+               "fetchedAt":1726400000,"expiresAt":1726400600,"source":"hermes-quota-plugin",
+               "plan":"pro","windows":[],"available":true,"status":"observed","accessStatus":"allowed",
+               "futureField":{"x":1}}]}
+            """
+            let rec = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            expect(rec?.accounts?.count == 1, "forward-compatible snapshot decoded")
+        }
+
+        print("B6: AccountSnapshot Codable — multiple providers")
+        do {
+            let json = """
+            {"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,
+             "accounts":[
+               {"schemaVersion":1,"provider":"openai-codex","scope":"platform","accountSelection":"auto",
+                 "fetchedAt":1726400000,"expiresAt":1726400600,"source":"hermes-quota-plugin",
+                 "plan":"pro","windows":[{"label":"5h","usedPercent":10,"remainingPercent":90,"resetAt":1726418000}],
+                 "available":true,"status":"observed","accessStatus":"unknown"},
+               {"schemaVersion":1,"provider":"anthropic","scope":"platform","accountSelection":"auto",
+                 "fetchedAt":1726400000,"expiresAt":1726400600,"source":"hermes-quota-plugin",
+                 "plan":"pro","windows":[],"available":false,"status":"unavailable","accessStatus":"unknown"},
+               {"schemaVersion":1,"provider":"nous","scope":"platform","accountSelection":"auto",
+                 "fetchedAt":1726400000,"expiresAt":1726400600,"source":"hermes-quota-plugin",
+                 "plan":"pro","windows":[{"label":"daily","usedPercent":75,"remainingPercent":25,"resetAt":null}],
+                 "available":true,"status":"observed","accessStatus":"denied","remainingUsd":null,"currency":"USD"}
+             ]}
+            """
+            let rec = try? JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            expect(rec?.accounts?.count == 3, "three provider snapshots decoded")
+            let denied = rec?.accounts?.first(where: { $0.accessStatus == "denied" })
+            expect(denied?.provider == "nous", "denied provider is nous")
+            expect(denied?.remainingUsd == nil, "nous denied: remainingUsd nil")
+            let codex = rec?.accounts?.first(where: { $0.provider == "openai-codex" })
+            expect(codex?.windows.first?.resetAt != nil, "codex window has resetAt")
+        }
+
+        print("B6: isSnapshotFresh — fresh snapshot")
+        do {
+            let now = Date(timeIntervalSince1970: 1726400300)  // 300s after fetch, 300s before expiry
+            let snap = AccountSnapshot(schemaVersion: 1, provider: "nous", scope: "platform",
+                accountSelection: "auto", fetchedAt: 1726400000, expiresAt: 1726400600,
+                source: "test", plan: "pro", windows: [], available: true,
+                status: "observed", accessStatus: "allowed", remainingUsd: nil, currency: nil)
+            expect(isSnapshotFresh(snap, now: now) == true, "snapshot fresh when within TTL")
+        }
+
+        print("B6: isSnapshotFresh — expired snapshot")
+        do {
+            let now = Date(timeIntervalSince1970: 1726400700)  // 100s past expiry
+            let snap = AccountSnapshot(schemaVersion: 1, provider: "nous", scope: "platform",
+                accountSelection: "auto", fetchedAt: 1726400000, expiresAt: 1726400600,
+                source: "test", plan: "pro", windows: [], available: true,
+                status: "observed", accessStatus: "allowed", remainingUsd: nil, currency: nil)
+            expect(isSnapshotFresh(snap, now: now) == false, "snapshot expired when past TTL")
+        }
+
+        print("B6: isSnapshotFresh — exactly at expiry boundary")
+        do {
+            let now = Date(timeIntervalSince1970: 1726400600)  // exactly at expiresAt
+            let snap = AccountSnapshot(schemaVersion: 1, provider: "anthropic", scope: "platform",
+                accountSelection: "auto", fetchedAt: 1726400000, expiresAt: 1726400600,
+                source: "test", plan: "pro", windows: [], available: true,
+                status: "observed", accessStatus: "unknown", remainingUsd: nil, currency: nil)
+            expect(isSnapshotFresh(snap, now: now) == false, "snapshot expired at exact boundary (nowEpoch < expiresAt, not <=)")
+        }
+
+        print("B6: snapshotFreshness — returns correct labels")
+        do {
+            let freshNow = Date(timeIntervalSince1970: 1726400100)  // 500s remaining (>5min)
+            let snap = AccountSnapshot(schemaVersion: 1, provider: "nous", scope: "platform",
+                accountSelection: "auto", fetchedAt: 1726400000, expiresAt: 1726400600,
+                source: "test", plan: "pro", windows: [], available: true,
+                status: "observed", accessStatus: "allowed", remainingUsd: nil, currency: nil)
+            expect(snapshotFreshness(snap, now: freshNow) == "fresh", "fresh when >5min remaining, got \(snapshotFreshness(snap, now: freshNow))")
+
+            let soonNow = Date(timeIntervalSince1970: 1726400420)  // 180s remaining (<5min)
+            let soonResult = snapshotFreshness(snap, now: soonNow)
+            expect(soonResult == "3m", "<5min → '3m', got \(soonResult)")
+
+            let almostNow = Date(timeIntervalSince1970: 1726400580)  // 20s remaining
+            let almostResult = snapshotFreshness(snap, now: almostNow)
+            expect(almostResult == "<1m", "<1min → '<1m', got \(almostResult)")
+
+            let expiredNow = Date(timeIntervalSince1970: 1726400700)
+            expect(snapshotFreshness(snap, now: expiredNow) == "expired", "expired when past TTL")
+        }
+
+        print("B6: formatResetTime — relative labels")
+        do {
+            let now = Date(timeIntervalSince1970: 1726400000)
+            expect(formatResetTime(1726400300, now: now) == "in 5m", "5min → 'in 5m'")
+            expect(formatResetTime(1726400030, now: now) == "<1m", "<1min → '<1m'")
+            expect(formatResetTime(1726407200, now: now) == "in 2h", "2h → 'in 2h'")
+            expect(formatResetTime(1726572800, now: now) == "in 2d", "2d → 'in 2d'")
+            expect(formatResetTime(nil, now: now) == "—", "nil → em dash")
+            expect(formatResetTime(1726399900, now: now) == "now", "past reset → 'now'")
+        }
+
+        print("B6: formatPercent — integer and decimal formatting")
+        do {
+            expect(formatPercent(0) == "0%", "0 → '0%'")
+            expect(formatPercent(100) == "100%", "100 → '100%'")
+            expect(formatPercent(45.0) == "45%", "45.0 → '45%' (integer)")
+            expect(formatPercent(45.2) == "45.2%", "45.2 → '45.2%'")
+            expect(formatPercent(99.9) == "99.9%", "99.9 → '99.9%'")
+        }
+
+        print("B6: accountProviderLabel — known providers")
+        do {
+            expect(accountProviderLabel("openai-codex") == "Codex", "openai-codex → Codex")
+            expect(accountProviderLabel("anthropic") == "Anthropic", "anthropic → Anthropic")
+            expect(accountProviderLabel("nous") == "Nous", "nous → Nous")
+            expect(accountProviderLabel("openrouter") == "OpenRouter", "openrouter → OpenRouter")
+            expect(accountProviderLabel("custom-provider") == "custom-provider", "unknown passes through")
+        }
+
+        print("B6: formatAccessStatus — all statuses")
+        do {
+            expect(formatAccessStatus("allowed", provider: "nous") == "Allowed", "allowed → Allowed")
+            expect(formatAccessStatus("denied", provider: "nous") == "Access denied", "denied → Access denied")
+            expect(formatAccessStatus("member-cap-exceeded", provider: "nous") == "Member cap exceeded", "member-cap-exceeded → Member cap exceeded")
+            expect(formatAccessStatus("unknown", provider: "openai-codex") == "—", "unknown → em dash")
+            expect(formatAccessStatus("something-new", provider: "anthropic") == "—", "unknown status → em dash")
+        }
+
+        print("B6: hasAccessRestriction — only denied/member-cap-exceeded")
+        do {
+            func makeSnap(access: String) -> AccountSnapshot {
+                AccountSnapshot(schemaVersion: 1, provider: "nous", scope: "platform",
+                    accountSelection: "auto", fetchedAt: 0, expiresAt: 600,
+                    source: "test", plan: "pro", windows: [], available: true,
+                    status: "observed", accessStatus: access, remainingUsd: nil, currency: nil)
+            }
+            expect(hasAccessRestriction(makeSnap(access: "denied")) == true, "denied → true")
+            expect(hasAccessRestriction(makeSnap(access: "member-cap-exceeded")) == true, "member-cap-exceeded → true")
+            expect(hasAccessRestriction(makeSnap(access: "allowed")) == false, "allowed → false")
+            expect(hasAccessRestriction(makeSnap(access: "unknown")) == false, "unknown → false")
+        }
+
+        print("B6: accounts-only record lifecycle — hasLocalStats=false with accounts")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false," +
+                        "\"accounts\":[{\"schemaVersion\":1,\"provider\":\"nous\",\"scope\":\"platform\",\"accountSelection\":\"auto\"," +
+                        "\"fetchedAt\":1726400000,\"expiresAt\":1726400600,\"source\":\"test\"," +
+                        "\"plan\":\"pro\",\"windows\":[],\"available\":true,\"status\":\"observed\",\"accessStatus\":\"allowed\"}]}")),
+                    elapsed: 0.05)
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .noData, "accounts-only → .noData (no local stats)")
+            expect(m.record?.accounts?.count == 1, "accounts decodable even in noData")
+            expect(m.record?.accounts?.first?.provider == "nous", "nous account present")
+        }
+
+        print("B6: stale record retains accounts snapshots")
+        do {
+            let m = await MainActor.run { () -> UsageModel in
+                let ex = ScriptedExecutor([
+                    CollectorOutcome(kind: .success(jsonData(
+                        "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                        "\"accounts\":[{\"schemaVersion\":1,\"provider\":\"anthropic\",\"scope\":\"platform\",\"accountSelection\":\"auto\"," +
+                        "\"fetchedAt\":1726400000,\"expiresAt\":1726400600,\"source\":\"test\"," +
+                        "\"plan\":\"pro\",\"windows\":[],\"available\":true,\"status\":\"observed\",\"accessStatus\":\"unknown\"}]}")),
+                    elapsed: 0.05),
+                    CollectorOutcome(kind: .failure("timeout"), elapsed: 0.05),
+                ])
+                return UsageModel(executor: ex, collectorTimeout: 5)
+            }
+            _ = await drainModel(m)
+            expect(m.loadState == .success, "first load succeeds")
+            await MainActor.run { m.refresh() }
+            _ = await drainModel(m)
+            expect(m.isStale, "stale after failed refresh")
+            expect(m.record?.accounts?.count == 1, "accounts retained in stale record")
+            expect(m.record?.accounts?.first?.provider == "anthropic", "retained account is anthropic")
+        }
+
+        print("B6: TTL constant matches collector")
+        expect(accountQuotaTTL == 600, "accountQuotaTTL = 600s (matches quota_io.py)")
+
         print("")
         print("\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
