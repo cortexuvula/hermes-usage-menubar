@@ -1035,10 +1035,24 @@ struct WeekBars: View {
 
 struct ContentView: View {
     @EnvironmentObject var model: UsageModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showAllModels = false
     @State private var clipboardCopied = false
     @State private var clipboardError: String?
     @State private var feedbackTimer: DispatchWorkItem?
+
+    // Contrast-scoped supporting/status text (t_98d271e9). Opaque sRGB values
+    // per appearance; no opacity multiplier. See CONTRAST-SCOPE.md.
+    private var scopedSupportingText: Color {
+        colorScheme == .dark ? Color(red: 0xA0/255, green: 0xA0/255, blue: 0xA0/255)
+                              : Color(red: 0x38/255, green: 0x38/255, blue: 0x38/255)
+    }
+    private var scopedWarningText: Color {
+        colorScheme == .dark ? .orange : Color(red: 0x60/255, green: 0x29/255, blue: 0x00/255)
+    }
+    private var scopedCopySuccessText: Color {
+        colorScheme == .dark ? .green : Color(red: 0x00/255, green: 0x45/255, blue: 0x12/255)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1363,7 +1377,7 @@ struct ContentView: View {
             if truncated {
                 Text("⚠️ Partial local collection — totals may omit older activity.")
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(scopedWarningText)
             }
             Label(truncated ? "Collected history (partial)" : "Collected history", systemImage: "clock")
                 .font(.subheadline.weight(.semibold))
@@ -1401,11 +1415,11 @@ struct ContentView: View {
             if unknownCalls > 0 {
                 Text(formatCallCoverageWarning(unknownCallRows: unknownCalls))
                     .font(.caption2)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(scopedWarningText)
             }
             Text("Estimated, not necessarily billed charges.")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(scopedSupportingText)
             if rec.details?.totals?.estimatedUsd == nil || hasNilProviderCost(rec) {
                 Text("— Cost unavailable; not zero")
                     .font(.caption2)
@@ -1593,7 +1607,7 @@ struct ContentView: View {
                 if let details = rec.details, details.truncated == true {
                     Text("⚠️ Partial collection")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(scopedWarningText)
                         .padding(.top, 2)
                 }
             }
@@ -1664,7 +1678,7 @@ struct ContentView: View {
                 if let details = rec.details, details.truncated == true {
                     Text("⚠️ Partial collection")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(scopedWarningText)
                         .padding(.top, 2)
                 }
             }
@@ -1751,7 +1765,7 @@ struct ContentView: View {
                 if rec.details?.truncated == true {
                     Text("Partial collection — some workload history may be missing")
                         .font(.caption2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(scopedWarningText)
                         .padding(.top, 4)
                 }
             }
@@ -1818,7 +1832,7 @@ struct ContentView: View {
             if clipboardCopied {
                 Text("✓ Copied to clipboard")
                     .font(.caption2)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(scopedCopySuccessText)
                     .accessibilityLabel("Copied to clipboard")
             } else if let error = clipboardError {
                 Text(error)
@@ -1831,12 +1845,12 @@ struct ContentView: View {
                     if let t = model.updatedAt {
                         Text(footerAgeText(t))
                             .font(.caption2)
-                            .foregroundStyle(model.isStale || model.isDayStale ? Color.orange : Color.secondary.opacity(0.6))
+                            .foregroundStyle(model.isStale || model.isDayStale ? scopedWarningText : scopedSupportingText)
                             .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
                     } else {
                         Text("—")
                             .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(scopedSupportingText)
                     }
                 }
                 Spacer()
