@@ -760,9 +760,9 @@ struct I2Tests {
         print("F6: formatCallCoverageWarning")
         do {
             let singular = formatCallCoverageWarning(unknownCallRows: 1)
-            expect(singular == "⚠️ Call count unavailable for 1 usage row", "singular: 1 row")
+            expect(singular == "Call count unavailable for 1 usage row", "singular: 1 row")
             let plural = formatCallCoverageWarning(unknownCallRows: 5)
-            expect(plural == "⚠️ Call count unavailable for 5 usage rows", "plural: 5 rows")
+            expect(plural == "Call count unavailable for 5 usage rows", "plural: 5 rows")
             // Verify it matches the phrasing in formatCallAvailability
             let avail = formatCallAvailability(calls: 100, unknownCallRows: 3)
             expect(avail.contains("call count unavailable for 3 usage rows"), "matches formatCallAvailability phrasing")

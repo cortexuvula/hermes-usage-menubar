@@ -593,7 +593,7 @@ func hasNilWorkloadCost(_ rec: UsageRecord) -> Bool {
 /// Uses the same phrasing as formatCallAvailability for consistency.
 func formatCallCoverageWarning(unknownCallRows: Int) -> String {
     let plural = unknownCallRows == 1 ? "row" : "rows"
-    return "⚠️ Call count unavailable for \(unknownCallRows) usage \(plural)"
+    return "Call count unavailable for \(unknownCallRows) usage \(plural)"
 }
 
 /// Resolve the display cost for a provider row (R3).
@@ -2242,7 +2242,7 @@ struct ContentView: View {
                             .foregroundStyle(paletteSecondary)
                             .help("Last successful update \(t.formatted(date: .complete, time: .standard)) · auto-refresh every 15 min")
                     } else {
-                        Text("—")
+                        Text("Not updated")
                             .font(.caption2)
                             .foregroundStyle(paletteSecondary)
                     }
