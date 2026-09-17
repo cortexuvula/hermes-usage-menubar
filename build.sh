@@ -35,8 +35,8 @@ fail() { echo "build.sh: $1" >&2; exit 1; }
 # version is 0.0.0 and the default build number is derived from the source
 # tree itself (commit count of HEAD), so a dev build is honest and can never
 # be mistaken for a published release.
-BUNDLE_SHORT_VERSION="${HERMES_USAGE_SHORT_VERSION:-${1:-}}"
-BUNDLE_BUILD_VERSION="${HERMES_USAGE_BUILD_VERSION:-${2:-}}"
+BUNDLE_SHORT_VERSION="${1:-${HERMES_USAGE_SHORT_VERSION:-}}"
+BUNDLE_BUILD_VERSION="${2:-${HERMES_USAGE_BUILD_VERSION:-}}"
 if [ -z "$BUNDLE_SHORT_VERSION" ]; then
   BUNDLE_SHORT_VERSION="0.0.0"
 fi

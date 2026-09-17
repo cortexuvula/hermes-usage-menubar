@@ -69,6 +69,21 @@ STAMPED_SHORT="$(plutil -extract CFBundleShortVersionString raw "$BUILD_DIR/pkg2
 STAMPED_BUILD="$(plutil -extract CFBundleVersion raw "$BUILD_DIR/pkg2/HermesUsage.app/Contents/Info.plist")"
 [ "$STAMPED_SHORT" = "1.2.3" ] || { echo "FAIL: requested 1.2.3, plist says '$STAMPED_SHORT'"; exit 1; }
 [ "$STAMPED_BUILD" = "77" ] || { echo "FAIL: requested build 77, plist says '$STAMPED_BUILD'"; exit 1; }
+# Precedence (t_4b36507d): explicit arguments win over ambient env vars —
+# build.sh:29-30 documents "arguments win, then env vars", and release.yml
+# stamps the tag via positional args, so a stale exported variable must be
+# the fallback, never a silent override of the caller's version.
+COLLECTOR_SRC="$SEED" \
+HERMES_USAGE_BUILD_DIR="$BUILD_DIR/pkg3" \
+HERMES_USAGE_INSTALL_DIR="$BUILD_DIR/install3" \
+HERMES_USAGE_SHORT_VERSION=9.9.9 \
+HERMES_USAGE_BUILD_VERSION=99 \
+  ./build.sh 1.2.3 77 > "$BUILD_DIR/bundle-build3.log" 2>&1 \
+  || { echo "build.sh failed with env+args precedence probe:"; tail -20 "$BUILD_DIR/bundle-build3.log"; exit 1; }
+PREC_SHORT="$(plutil -extract CFBundleShortVersionString raw "$BUILD_DIR/pkg3/HermesUsage.app/Contents/Info.plist")"
+PREC_BUILD="$(plutil -extract CFBundleVersion raw "$BUILD_DIR/pkg3/HermesUsage.app/Contents/Info.plist")"
+[ "$PREC_SHORT" = "1.2.3" ] || { echo "FAIL: env var overrode explicit argument: requested 1.2.3 with HERMES_USAGE_SHORT_VERSION=9.9.9 exported, plist says '$PREC_SHORT'"; exit 1; }
+[ "$PREC_BUILD" = "77" ] || { echo "FAIL: env var overrode explicit argument: requested build 77 with HERMES_USAGE_BUILD_VERSION=99 exported, plist says '$PREC_BUILD'"; exit 1; }
 # Non-numeric versions (e.g. pre-release suffixes) are REJECTED before any
 # output is produced — Apple's format for these keys is digits and periods
 # only. Each rejection must exit non-zero.
