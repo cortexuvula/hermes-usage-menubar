@@ -190,6 +190,15 @@ rm ~/Library/LaunchAgents/ca.andrehugo.hermes-usage.plist
   "Accounts / quota section" above.
 - Numbers shown are "device" scope: they sum across all profiles' stores on this
   machine (matching the upstream collector's semantics), not per-profile.
+  **For diagnostics:** the collector's `scope` field is an *intent* label, not a
+  measurement of which store was read — a run under
+  `HERMES_HOME=~/.hermes/profiles/<name>` reports `scope: device` over that
+  profile's own figures (illustrated in a single minute: ~2.1M profile-scoped
+  against ~8.2M device-wide, both labelled `scope: device`). Print the effective
+  `HERMES_HOME` alongside any number you quote, and treat a quoted count as a
+  timestamped observation rather than a value to compare against — the totals grow
+  as work happens. The app itself launches from LaunchAgent context with no
+  override, so the figures it shows are device-wide.
 - Daily attribution is estimated from assistant-message activity (same as upstream).
 
 MIT — see LICENSE (upstream) and HermesUsage.swift.
