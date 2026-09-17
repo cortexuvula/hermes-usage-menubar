@@ -1474,6 +1474,61 @@ struct I2Tests {
             expect(recZeroTotal.details?.totals?.tokens == 0, "observed zero total decodes and stays zero")
         }
 
+        // A7 (t_58805a08): the all-nil model ROW — the production view path.
+        // The earlier A7 tests covered the totals chips and the AX formatter;
+        // native verification found the model row itself still rendered a
+        // right-hand "0" with four nil-coerced "0" components, and AXHelp
+        // inherited "0 tokens" from the total Text's .help. These tests drive
+        // the same production helpers the view calls, on the exact synthetic
+        // fixture from the native verification record.
+        do {
+            let fixture = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"modelUsage\":{\"Synthetic absent model\":{}}," +
+                "\"details\":{\"scope\":\"PAYLOAD_SCOPE_CANARY\",\"coverage\":\"bounded local history\",\"truncated\":false,\"totals\":{}}," +
+                "\"accounts\":[]}"
+            ))
+            guard let mu = fixture.modelUsage?["Synthetic absent model"] else {
+                expect(false, "fixture decodes with all-nil Synthetic absent model")
+                return // unreachable in a passing run; satisfies the guard
+            }
+            expect(!mu.hasAnyComponent, "all-nil model is recognized as unobserved at the row boundary")
+
+            // The recorded total the view feeds the row (allSortedModels
+            // shape: mu.totalTokens == 0 for an all-nil model).
+            let recordedTotal = mu.totalTokens
+            expect(recordedTotal == 0, "all-nil recorded total is the assumed zero (input to the row helpers)")
+
+            // Production presentation calls for the right-hand total.
+            let totalText = modelRowTotalText(recordedTotal: recordedTotal, mu: mu)
+            expect(totalText == "—", "all-nil model row total renders '—', got '\(totalText)'")
+            let totalHelp = modelRowTotalHelp(recordedTotal: recordedTotal, mu: mu)
+            expect(!totalHelp.contains("0 tokens"), "all-nil model row help carries no '0 tokens', got '\(totalHelp)'")
+            expect(totalHelp == "Token components not observed", "all-nil model row help names the absence")
+
+            // AXValue stays the A7 contract string.
+            let ax = formatModelAccessibilityLabel(modelName: "Synthetic absent model", mu: mu)
+            expect(ax == "Synthetic absent model, token components not observed", "AXValue unchanged by the row fix")
+
+            // Preserved behavior 1: real observed zero stays numeric.
+            let observedZero = ModelUsage(inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
+            expect(modelRowTotalText(recordedTotal: 0, mu: observedZero) == "0",
+                   "observed all-zero model row total stays '0'")
+            expect(modelRowTotalHelp(recordedTotal: 0, mu: observedZero) == "0 tokens",
+                   "observed all-zero model row help stays '0 tokens'")
+
+            // Preserved behavior 2: partially observed model keeps its numeric
+            // total and component rendering path (hasAnyComponent true).
+            let partial = ModelUsage(inputTokens: 1500, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
+            expect(modelRowTotalText(recordedTotal: 1500, mu: partial) == "1.5k",
+                   "partially observed model keeps numeric total, got '\(modelRowTotalText(recordedTotal: 1500, mu: partial))'")
+            expect(partial.hasAnyComponent, "partial model renders component rows, not the not-observed message")
+
+            // Preserved behavior 3: row without a ModelUsage entry at all
+            // (mu == nil) keeps the legacy numeric path.
+            expect(modelRowTotalText(recordedTotal: 42, mu: nil) == "42", "mu==nil row keeps numeric total")
+        }
+
         print("A5: quota-only record renders accounts section alongside empty local state")
         do {
             // Producer-valid quota-only payload: hasLocalStats=false with a

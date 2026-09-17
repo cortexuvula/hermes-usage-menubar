@@ -1880,70 +1880,87 @@ struct ContentView: View {
                                 .truncationMode(.middle)
                                 .help(modelName)
                             Spacer()
-                            Text(compactTokens(Double(totalTokens)))
+                            // A7: an all-nil ModelUsage's recorded total is a
+                            // sum of nil-coerced components — assumed, not
+                            // measured. Show "—" and say so in help; a real
+                            // observed zero stays a numeric "0".
+                            Text(modelRowTotalText(recordedTotal: totalTokens, mu: mu))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(paletteSecondary)
-                                .help(exactTokens(totalTokens))
+                                .help(modelRowTotalHelp(recordedTotal: totalTokens, mu: mu))
                         }
                         if let mu = mu {
-                            ViewThatFits {
-                                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
-                                    GridRow {
+                            if mu.hasAnyComponent {
+                                ViewThatFits {
+                                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 2) {
+                                        GridRow {
+                                            HStack(spacing: 4) {
+                                                Text("In:")
+                                                Text(tokenCountString(mu.inputTokens ?? 0))
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.7)
+                                            }
+                                            HStack(spacing: 4) {
+                                                Text("Out:")
+                                                Text(tokenCountString(mu.outputTokens ?? 0))
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.7)
+                                            }
+                                        }
+                                        GridRow {
+                                            HStack(spacing: 4) {
+                                                Text("Cache read:")
+                                                Text(tokenCountString(mu.cacheReadInputTokens ?? 0))
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.7)
+                                            }
+                                            HStack(spacing: 4) {
+                                                Text("Cache write:")
+                                                Text(tokenCountString(mu.cacheCreationInputTokens ?? 0))
+                                                    .lineLimit(1)
+                                                    .minimumScaleFactor(0.7)
+                                                    .help("Token components: some stores or providers may not record every component")
+                                            }
+                                        }
+                                    }
+                                    VStack(alignment: .leading, spacing: 2) {
                                         HStack(spacing: 4) {
                                             Text("In:")
                                             Text(tokenCountString(mu.inputTokens ?? 0))
                                                 .lineLimit(1)
-                                                .minimumScaleFactor(0.7)
                                         }
                                         HStack(spacing: 4) {
                                             Text("Out:")
                                             Text(tokenCountString(mu.outputTokens ?? 0))
                                                 .lineLimit(1)
-                                                .minimumScaleFactor(0.7)
                                         }
-                                    }
-                                    GridRow {
                                         HStack(spacing: 4) {
                                             Text("Cache read:")
                                             Text(tokenCountString(mu.cacheReadInputTokens ?? 0))
                                                 .lineLimit(1)
-                                                .minimumScaleFactor(0.7)
                                         }
                                         HStack(spacing: 4) {
                                             Text("Cache write:")
                                             Text(tokenCountString(mu.cacheCreationInputTokens ?? 0))
                                                 .lineLimit(1)
-                                                .minimumScaleFactor(0.7)
-                                                .help("Token components: some stores or providers may not record every component")
+                                            .help("Token components: some stores or providers may not record every component")
                                         }
                                     }
                                 }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    HStack(spacing: 4) {
-                                        Text("In:")
-                                        Text(tokenCountString(mu.inputTokens ?? 0))
-                                            .lineLimit(1)
-                                    }
-                                    HStack(spacing: 4) {
-                                        Text("Out:")
-                                        Text(tokenCountString(mu.outputTokens ?? 0))
-                                            .lineLimit(1)
-                                    }
-                                    HStack(spacing: 4) {
-                                        Text("Cache read:")
-                                        Text(tokenCountString(mu.cacheReadInputTokens ?? 0))
-                                            .lineLimit(1)
-                                    }
-                                    HStack(spacing: 4) {
-                                        Text("Cache write:")
-                                        Text(tokenCountString(mu.cacheCreationInputTokens ?? 0))
-                                            .lineLimit(1)
-                                            .help("Token components: some stores or providers may not record every component")
-                                    }
-                                }
+                                .font(.caption2)
+                                .foregroundStyle(paletteSecondary)
+                            } else {
+                                // A7: nothing was observed for this model —
+                                // say so once, full width, instead of four
+                                // nil-coerced "0" component rows. Hidden from
+                                // AX: the row's combined label already says
+                                // "token components not observed".
+                                Text("Token components not observed")
+                                    .font(.caption2)
+                                    .foregroundStyle(paletteSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .accessibilityHidden(true)
                             }
-                            .font(.caption2)
-                            .foregroundStyle(paletteSecondary)
                         }
                     }
                     .padding(.vertical, 1)
@@ -2549,6 +2566,24 @@ extension ModelUsage {
     var hasAnyComponent: Bool {
         inputTokens != nil || outputTokens != nil || cacheReadInputTokens != nil || cacheCreationInputTokens != nil
     }
+}
+
+/// A7: visible right-hand total for a model row. The row's recorded total is
+/// a sum over nil-coerced components for an all-nil ModelUsage, so the row
+/// must show "—" — an em dash meaning "not observed", never an assumed 0.
+/// The string literal (not compactTokens(nil)) keeps this function callable
+/// from non-view tests without touching compactTokens' signature.
+func modelRowTotalText(recordedTotal: Int, mu: ModelUsage?) -> String {
+    if let mu, !mu.hasAnyComponent { return "—" }
+    return compactTokens(Double(recordedTotal))
+}
+
+/// A7: hover-help for the right-hand total. Names the absence for an all-nil
+/// model so inherited AXHelp never carries "0 tokens". The message matches
+/// the AXValue primary label ("token components not observed") deliberately.
+func modelRowTotalHelp(recordedTotal: Int, mu: ModelUsage?) -> String {
+    if let mu, !mu.hasAnyComponent { return "Token components not observed" }
+    return exactTokens(recordedTotal)
 }
 
 // MARK: - B4: Token makeup
