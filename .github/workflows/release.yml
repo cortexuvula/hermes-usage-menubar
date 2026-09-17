@@ -12,8 +12,8 @@ on:
     inputs:
       # Non-publishing probe path (t_b2280a32): dispatch builds the app with
       # an EXPLICIT version so the plist stamping can be verified without
-      # tagging a test release. Defaults to 0.0.0-dev-marker semantics via
-      # build.sh's untagged defaults when left empty.
+      # tagging a test release. Empty input = build.sh untagged defaults
+      # (0.0.0 + monotonic build number — never a release claim).
       version:
         description: "Version to stamp (X.Y.Z); empty = untagged defaults (0.0.0)"
         required: false
