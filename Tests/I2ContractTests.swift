@@ -237,6 +237,84 @@ struct I2Tests {
         expect(compactTokens(1500) == "1.5k", "1.5k, got \(compactTokens(1500))")
         expect(compactTokens(2500000) == "2.5M", "2.5M")
 
+        // ---- A8: compactTokens rounding contract (audit t_d11f2784) ----
+        // The displayed figure is asserted against the ORIGINAL integer via
+        // an exact reference (displayed value reconstructed as an integer),
+        // with the nominal half-step tolerance explicit in each assertion:
+        // ±50 in 1k–9,999, ±500 in 10k–999,999, ±50,000 in the M band.
+        // `displayedInt` reconstructs the integer the compact string claims
+        // ("1.2k" → 1200, "146k" → 146_000, "5000000.2M" → 5_000_000_200_000);
+        // the assertions then require |claimed − n| ≤ the band's half-step.
+        func displayedInt(_ s: String) -> Int? {
+            var str = s
+            var scale = 1
+            if str.hasSuffix("k") { scale = 1_000; str.removeLast() }
+            else if str.hasSuffix("M") { scale = 1_000_000; str.removeLast() }
+            guard let value = Double(str) else { return nil }
+            return Int((value * Double(scale)).rounded())
+        }
+        // Band boundaries (selected on the raw value).
+        print("A8: compactTokens band boundaries")
+        expect(compactTokens(999) == "999", "999 → unit band, got \(compactTokens(999))")
+        expect(compactTokens(1_000) == "1.0k", "1,000 → 1.0k, got \(compactTokens(1_000))")
+        expect(compactTokens(9_999) == "10.0k", "9,999 → 10.0k (known seam), got \(compactTokens(9_999))")
+        expect(compactTokens(10_000) == "10k", "10,000 → 10k, got \(compactTokens(10_000))")
+        expect(compactTokens(999_999) == "1000k", "999,999 → 1000k (known seam), got \(compactTokens(999_999))")
+        expect(compactTokens(1_000_000) == "1.0M", "1,000,000 → 1.0M, got \(compactTokens(1_000_000))")
+        // Ties-to-even at discriminating midpoints where the candidate rules
+        // differ (half-away-from-zero would give .3 in each case).
+        print("A8: compactTokens ties-to-even at midpoints")
+        expect(compactTokens(1_250) == "1.2k", "1,250 → 1.2k (ties-to-even), got \(compactTokens(1_250))")
+        expect(compactTokens(2_250) == "2.2k", "2,250 → 2.2k (ties-to-even), got \(compactTokens(2_250))")
+        expect(compactTokens(1_250_000) == "1.2M", "1,250,000 → 1.2M (ties-to-even), got \(compactTokens(1_250_000))")
+        expect(compactTokens(2_250_000) == "2.2M", "2,250,000 → 2.2M (ties-to-even), got \(compactTokens(2_250_000))")
+        // Midpoint neighbours flip at the midpoint in every band, and the
+        // error vs the original integer never exceeds the half-step.
+        print("A8: compactTokens half-step error bound at midpoint neighbours")
+        do {
+            let kBandCases: [(Int, Int)] = [(1_249, 50), (1_251, 50), (2_249, 50), (2_251, 50)]
+            for (n, halfStep) in kBandCases {
+                let s = compactTokens(Double(n))
+                let claimed = displayedInt(s)
+                expect(claimed != nil, "parseable display for \(n): \(s)")
+                if let claimed = claimed {
+                    expect(abs(claimed - n) <= halfStep,
+                           "k band |\(claimed) − \(n)| ≤ \(halfStep), display \(s)")
+                }
+            }
+            expect(compactTokens(1_249) == "1.2k", "1,249 → 1.2k, got \(compactTokens(1_249))")
+            expect(compactTokens(1_251) == "1.3k", "1,251 → 1.3k, got \(compactTokens(1_251))")
+            let coarseBandCases: [(Int, Int)] = [(10_499, 500), (10_501, 500), (145_499, 500), (145_501, 500)]
+            for (n, halfStep) in coarseBandCases {
+                let s = compactTokens(Double(n))
+                let claimed = displayedInt(s)
+                expect(claimed != nil, "parseable display for \(n): \(s)")
+                if let claimed = claimed {
+                    expect(abs(claimed - n) <= halfStep,
+                           "10k band |\(claimed) − \(n)| ≤ \(halfStep), display \(s)")
+                }
+            }
+            expect(compactTokens(10_499) == "10k", "10,499 → 10k, got \(compactTokens(10_499))")
+            expect(compactTokens(10_501) == "11k", "10,501 → 11k, got \(compactTokens(10_501))")
+            expect(compactTokens(145_500) == "146k", "145,500 → 146k (midpoint rounds up), got \(compactTokens(145_500))")
+            let mBandCases: [(Int, Int)] = [
+                (5_000_000_249_999, 50_000), (5_000_000_250_000, 50_000), (5_000_000_250_001, 50_000),
+                (9_007_199_254_250_000, 50_000),
+            ]
+            for (n, halfStep) in mBandCases {
+                let s = compactTokens(Double(n))
+                let claimed = displayedInt(s)
+                expect(claimed != nil, "parseable display for \(n): \(s)")
+                if let claimed = claimed {
+                    expect(abs(claimed - n) <= halfStep,
+                           "M band |\(claimed) − \(n)| ≤ \(halfStep), display \(s)")
+                }
+            }
+            expect(compactTokens(5_000_000_249_999) == "5000000.2M", "5,000,000,249,999 → .2, got \(compactTokens(5_000_000_249_999))")
+            expect(compactTokens(5_000_000_250_001) == "5000000.3M", "5,000,000,250,001 → .3, got \(compactTokens(5_000_000_250_001))")
+            expect(compactTokens(9_007_199_254_250_000) == "9007199254.2M", "2^53-band midpoint → 9007199254.2M, got \(compactTokens(9_007_199_254_250_000))")
+        }
+
         // ---- CollectorRunner.classify contract (shared with real executor) ----
         print("I2/R1: classify — timeout message")
         do {
@@ -845,12 +923,12 @@ struct I2Tests {
         do {
             let allPresent = formatWorkloadAccessibilitySummary(
                 (name: "ordinary", tokens: 12_600_000, calls: 234, estimatedUsd: 1.23))
-            expect(allPresent == "Ordinary, 234 calls, 12.6M tokens, Cost $1.23",
+            expect(allPresent == "Ordinary, 234 calls, 12,600,000 tokens, Cost $1.23",
                    "all present → '\(allPresent)'")
 
             let nilCalls = formatWorkloadAccessibilitySummary(
                 (name: "unknown", tokens: 730_000, calls: nil, estimatedUsd: nil))
-            expect(nilCalls == "Unknown, Calls not recorded, 730k tokens, Cost unavailable; not zero",
+            expect(nilCalls == "Unknown, Calls not recorded, 730,000 tokens, Cost unavailable; not zero",
                    "nil calls+cost → '\(nilCalls)'")
 
             let nilTokens = formatWorkloadAccessibilitySummary(

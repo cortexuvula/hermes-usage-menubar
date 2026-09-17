@@ -124,6 +124,32 @@ struct Totals: Codable {
 
 // MARK: - Formatting helpers
 
+/// A8: compact token figure for space-constrained surfaces (menu bar,
+/// chips, table rows). MEASURED contract — probes recorded on audit card
+/// t_d11f2784, pinned by the A8 contract tests in Tests/I2ContractTests.swift.
+///
+/// - Bands, selected on the raw value: ≥1e6 → "%.1fM", ≥1e4 → "%.0fk",
+///   ≥1e3 → "%.1fk", else "%.0f".
+/// - Tie rule: ties-to-even (printf semantics), observable because scaled
+///   counts land exactly on display midpoints when n = 250×odd in the k
+///   bands or 250,000×odd in the M band: 1,250 → "1.2k", 2,250 → "2.2k",
+///   1,250,000 → "1.2M", 2,250,000 → "2.2M" (half-away-from-zero would
+///   give .3 in each case).
+/// - Error bound: nominal half-step rounding — ±50 in 1k–9,999, ±500 in
+///   10k–999,999, ±50,000 in the M band — with possible additional
+///   floating-point error at extreme counts. Verified at every tested
+///   point up to 2^53 (the collector's cap); at ~1e16 the Int→Double
+///   conversion alone can push the error one unit past the nominal
+///   half-step. The bound is intended-and-verified-at-tested-points,
+///   not exhaustively proven.
+/// - Known seam, intentionally unchanged (presentation refinement deferred
+///   to the owner): 999,999 → "1000k" while 1,000,000 → "1.0M"; likewise
+///   9,999 → "10.0k" vs 10,000 → "10k", and 99,999 → "100k".
+///
+/// Every surface that renders this compact figure must offer the exact
+/// count on the same surface group — hover help, accessibility label, or
+/// the copied receipt — via `exactTokens`/`tokenCountString`. The coarse
+/// 10k–999,999 band is ±500 (up to 5% at 10,000), which is why.
 func compactTokens(_ n: Double) -> String {
     if n >= 1_000_000 { return String(format: "%.1fM", n / 1_000_000) }
     if n >= 10_000 { return String(format: "%.0fk", n / 1_000) }
@@ -632,7 +658,9 @@ func formatWorkloadAccessibilitySummary(_ task: (name: String, tokens: Int?, cal
     }
     
     if let tokens = task.tokens {
-        parts.append("\(compactTokens(Double(tokens))) tokens")
+        // A8: exact, not compact — this summary is the exact-value access
+        // for the workload row's compact token figure (±500 in 10k–999,999).
+        parts.append("\(exactTokens(tokens))")
     } else {
         parts.append("Tokens not recorded")
     }
@@ -2378,6 +2406,9 @@ struct ContentView: View {
 
                     ForEach(tasks, id: \.name) { task in
                         HStack {
+                            // A8: every compact figure on this row keeps the
+                            // exact value reachable — token counts via the
+                            // row help text, cost via costHelp.
                             Text(taskLabel(task.name))
                                 .font(.caption)
                                 .foregroundStyle(palettePrimary)
@@ -2400,6 +2431,7 @@ struct ContentView: View {
                                     .font(.caption.monospacedDigit())
                                     .foregroundStyle(paletteSecondary)
                                     .frame(width: 44, alignment: .trailing)
+                                    .help(exactTokens(tokens))
                             } else {
                                 Text("—")
                                     .font(.caption)
