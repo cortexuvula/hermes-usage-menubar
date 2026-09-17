@@ -9,6 +9,15 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      # Non-publishing probe path (t_b2280a32): dispatch builds the app with
+      # an EXPLICIT version so the plist stamping can be verified without
+      # tagging a test release. Defaults to 0.0.0-dev-marker semantics via
+      # build.sh's untagged defaults when left empty.
+      version:
+        description: "Version to stamp (X.Y.Z); empty = untagged defaults (0.0.0)"
+        required: false
+        default: ""
 
 permissions:
   contents: write  # tag pushes create a GitHub Release
@@ -137,6 +146,9 @@ jobs:
           COLLECTOR_SRC: ${{ runner.temp }}/.ci-collector
           HERMES_USAGE_BUILD_DIR: ${{ runner.temp }}/pkg
           HERMES_USAGE_INSTALL_DIR: ${{ runner.temp }}/apps
+          # Env, not inline interpolation: keeps the dispatch input out of the
+          # shell script text (no expansion into the command stream).
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
           # Stage collector copies outside the workspace (clean-tree rule).
@@ -144,10 +156,31 @@ jobs:
           cp build/HermesUsage.app/Contents/Resources/collector/hermes-usage.py "$RUNNER_TEMP/.ci-collector/collector/"
           cp build/HermesUsage.app/Contents/Resources/hermes-usage-export/quota_io.py "$RUNNER_TEMP/.ci-collector/hermes-usage-export/"
 
+          # Version context (t_b2280a32): the bundle self-identifies as the
+          # release being built. Tag push: strip the leading v and stamp the
+          # tag's version; build iteration is the CI run number (monotonic).
+          # workflow_dispatch: stamp the requested input (probe path, never
+          # publishes). Anything else (branch push reaching this workflow in
+          # the future) falls through to build.sh's untagged defaults.
+          VERSION_ARGS=()
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            VERSION_ARGS=("$TAG_VERSION" "$GITHUB_RUN_NUMBER")
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "${DISPATCH_VERSION:-}" ]; then
+            VERSION_ARGS=("$DISPATCH_VERSION" "$GITHUB_RUN_NUMBER")
+          fi
+          if [ ${#VERSION_ARGS[@]} -gt 0 ]; then
+            echo "stamping release context: version=${VERSION_ARGS[0]} build=$GITHUB_RUN_NUMBER"
+          else
+            echo "no release context: build.sh untagged defaults apply (0.0.0 + derived build number)"
+          fi
+
           # build.sh ad-hoc signs; we overwrite with the real signature
           # immediately after, then gate on verification of the FINAL
-          # artifact (constraint 4).
-          ./build.sh
+          # artifact (constraint 4). build.sh validates the version format
+          # and asserts the plist readback BEFORE its ad-hoc signature, so
+          # an invalid value can never reach a signed artifact.
+          ./build.sh "${VERSION_ARGS[@]}"
 
           APP="$RUNNER_TEMP/pkg/HermesUsage.app"
           codesign --force --deep --sign "$APPLE_SIGNING_IDENTITY" \
@@ -301,7 +334,27 @@ jobs:
             echo "::error::RELEASE BLOCKED: a tag push demands a notarized + stapled + spctl-accepted artifact. Current: spctl=${SPCTL_ASSESS:-rejected} stapled=${STAPLED:-no}. Produce the .p8 notarization key first."
             exit 1
           fi
-          echo "Release gate passed: notarized, stapled, spctl accepted."
+          # Version identity gate (t_b2280a32): the artifact this tag is about
+          # to publish must self-declare the tag's version. Split per Apple's
+          # documented intent (verified against developer.apple.com):
+          # CFBundleShortVersionString = marketing version = the tag (v1.1.0
+          # -> 1.1.0); CFBundleVersion = monotonic build iteration = the CI
+          # run number. Checks the FINAL (notarized+stapled) artifact, after
+          # every step that could have rewritten the bundle.
+          APP="$RUNNER_TEMP/pkg/HermesUsage.app"
+          EXPECTED_SHORT="${GITHUB_REF_NAME#v}"
+          PLIST_SHORT="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
+          PLIST_BUILD="$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")"
+          if [ "$PLIST_SHORT" != "$EXPECTED_SHORT" ]; then
+            echo "::error::RELEASE BLOCKED: version identity mismatch. tag=$EXPECTED_SHORT, CFBundleShortVersionString=$PLIST_SHORT — the published asset must self-identify as the tag."
+            exit 1
+          fi
+          if [ "$PLIST_BUILD" != "$GITHUB_RUN_NUMBER" ]; then
+            echo "::error::RELEASE BLOCKED: build iteration mismatch. expected CI run number=$GITHUB_RUN_NUMBER, CFBundleVersion=$PLIST_BUILD."
+            exit 1
+          fi
+          echo "Version identity gate passed: tag=$EXPECTED_SHORT, plist short=$PLIST_SHORT, build=$PLIST_BUILD."
+          echo "Release gate passed: notarized, stapled, spctl accepted, version matches tag."
 
       - name: Zip and label artifact
         run: |

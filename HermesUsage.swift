@@ -586,11 +586,30 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
         lines.append("Daily attribution: \(attribution)")
     }
     lines.append("Source: local Hermes Agent session stores on this Mac")
+    lines.append("App version: \(appVersionDescription())")
     lines.append("")
     lines.append("This is bounded local history, not a complete inventory.")
     lines.append("Costs are database observations, not billing statements.")
 
     return lines.joined(separator: "\n")
+}
+
+/// t_b2280a32: the app's own version identity, read from the bundle's
+/// Info.plist (the same fields Finder's Get Info reports). Published builds
+/// are stamped at release time (CFBundleShortVersionString = the tag,
+/// CFBundleVersion = the CI build iteration); untagged builds declare
+/// 0.0.0 with a derived build number. Surfaced in the copied receipt so
+/// "which build is running?" is answerable without hashing the executable.
+/// Failure to read the plist is stated honestly, never defaulted.
+func appVersionDescription() -> String {
+    guard let infoPlist = Bundle.main.infoDictionary,
+          let short = infoPlist["CFBundleShortVersionString"] as? String,
+          let build = infoPlist["CFBundleVersion"] as? String,
+          !short.isEmpty, !build.isEmpty
+    else {
+        return "version unavailable"
+    }
+    return "\(short) (build \(build))"
 }
 
 /// F3: Format explicit accessibility summary for a workload row.
@@ -2308,7 +2327,7 @@ struct ContentView: View {
                         .font(.caption2)
                         .foregroundStyle(paletteSecondary)
                 }
-                .accessibilityLabel("Copied to clipboard")
+                .accessibilityLabel("Copied to clipboard. Usage summary version \(appVersionDescription()).")
             } else if let error = clipboardError {
                 Text(error)
                     .font(.caption2)

@@ -56,6 +56,10 @@ jobs:
           # fail the run on a malformed bundle (R4 rework).
           ./build.sh
           plutil -lint "$RUNNER_TEMP/pkg/HermesUsage.app/Contents/Info.plist"
+          # t_b2280a32: CI builds are untagged; the bundle must never claim
+          # a release version by default (the 1.0.0 hardcode this fixes).
+          CI_SHORT="$(plutil -extract CFBundleShortVersionString raw "$RUNNER_TEMP/pkg/HermesUsage.app/Contents/Info.plist")"
+          [ "$CI_SHORT" = "0.0.0" ] || { echo "FAIL: CI build claims version $CI_SHORT, expected 0.0.0"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/pkg/HermesUsage.app"
           test -x "$RUNNER_TEMP/pkg/HermesUsage.app/Contents/MacOS/HermesUsage"
           test -d "$RUNNER_TEMP/apps/HermesUsage.app" || { echo "redirected install missing"; exit 1; }

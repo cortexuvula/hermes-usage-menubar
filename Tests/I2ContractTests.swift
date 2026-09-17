@@ -925,6 +925,7 @@ struct I2Tests {
             expect(receipt.contains("2 providers"), "receipt has provider count")
             expect(receipt.contains("last 7 days"), "receipt has daily attribution")
             expect(receipt.contains("local Hermes Agent session stores"), "receipt has data source")
+            expect(receipt.contains("App version:"), "receipt carries the app's own version (t_b2280a32)")
             expect(!receipt.contains("/Users/") && !receipt.contains("account") && !receipt.contains("stderr"),
                    "receipt excludes sensitive paths/identifiers")
             

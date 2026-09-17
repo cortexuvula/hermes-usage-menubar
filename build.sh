@@ -24,6 +24,43 @@ RES="$CONTENTS/Resources"
 
 fail() { echo "build.sh: $1" >&2; exit 1; }
 
+# ---- Version stamping (t_b2280a32) -------------------------------------
+# CFBundleShortVersionString / CFBundleVersion come from the RELEASE
+# CONTEXT, never from a hardcoded literal: the caller (release.yml) passes
+# the tag being built; arguments win, then env vars.
+#   $1 / HERMES_USAGE_SHORT_VERSION  -> CFBundleShortVersionString (X.Y.Z)
+#   $2 / HERMES_USAGE_BUILD_VERSION  -> CFBundleVersion (1-3 integers,
+#                                       a monotonic build iteration)
+# Untagged/local builds must NOT invent a release claim: the default short
+# version is 0.0.0 and the default build number is derived from the source
+# tree itself (commit count of HEAD), so a dev build is honest and can never
+# be mistaken for a published release.
+BUNDLE_SHORT_VERSION="${HERMES_USAGE_SHORT_VERSION:-${1:-}}"
+BUNDLE_BUILD_VERSION="${HERMES_USAGE_BUILD_VERSION:-${2:-}}"
+if [ -z "$BUNDLE_SHORT_VERSION" ]; then
+  BUNDLE_SHORT_VERSION="0.0.0"
+fi
+if [ -z "$BUNDLE_BUILD_VERSION" ]; then
+  COMMIT_COUNT="$(git rev-list --count HEAD 2>/dev/null || true)"
+  if [ -z "$COMMIT_COUNT" ]; then
+    # Xcode-license wall: the Xcode-shim git can refuse to run (exit 69).
+    COMMIT_COUNT="$(/Library/Developer/CommandLineTools/usr/bin/git rev-list --count HEAD 2>/dev/null || true)"
+  fi
+  BUNDLE_BUILD_VERSION="${COMMIT_COUNT:-0}"
+fi
+
+# Apple's documented formats, asserted BEFORE any output is removed or
+# compiled: short version is exactly three period-separated integers, build
+# version is one to three; digits and periods only. A tag-derived value that
+# fails (e.g. "1.1.0-beta") is REJECTED here, never stamped. Keeping this
+# check ahead of every codesign also means an invalid value can never reach
+# a signed artifact (Info.plist is sealed into the code directory, so a
+# post-sign stamp would invalidate the signature instead).
+[[ "$BUNDLE_SHORT_VERSION" =~ ^[0-9]+(\.[0-9]+){2}$ ]] \
+  || fail "invalid CFBundleShortVersionString '$BUNDLE_SHORT_VERSION' — required format is three period-separated integers (digits and periods only)"
+[[ "$BUNDLE_BUILD_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] \
+  || fail "invalid CFBundleVersion '$BUNDLE_BUILD_VERSION' — required format is one to three period-separated integers (digits and periods only)"
+
 # Hard rule (audit rework): never overwrite the live install from a
 # non-default checkout. If the install target is the default ~/Applications
 # AND this script is not running from the canonical checkout location,
@@ -61,8 +98,8 @@ echo "==> Packaging collector from $COLLECTOR_SRC..."
 cp "$COLLECTOR_SRC/collector/hermes-usage.py" "$RES/collector/"
 cp "$COLLECTOR_SRC/hermes-usage-export/quota_io.py" "$RES/hermes-usage-export/"
 
-echo "==> Writing Info.plist..."
-cat > "$CONTENTS/Info.plist" <<'PLIST'
+echo "==> Writing Info.plist (version ${BUNDLE_SHORT_VERSION}, build ${BUNDLE_BUILD_VERSION})..."
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -70,8 +107,8 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>Hermes Usage</string>
     <key>CFBundleDisplayName</key><string>Hermes Usage</string>
     <key>CFBundleIdentifier</key><string>ca.andrehugo.hermes-usage</string>
-    <key>CFBundleVersion</key><string>1.0.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleVersion</key><string>${BUNDLE_BUILD_VERSION}</string>
+    <key>CFBundleShortVersionString</key><string>${BUNDLE_SHORT_VERSION}</string>
     <key>CFBundleExecutable</key><string>HermesUsage</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -113,6 +150,14 @@ echo "==> Verifying..."
 # Fail the build if the generated plist is malformed or the signature does
 # not verify — a broken bundle must never be installed (R4 rework).
 plutil -lint "$CONTENTS/Info.plist" || fail "generated Info.plist failed plutil -lint"
+# Version readback, asserted BEFORE codesign seals Info.plist into the code
+# directory (t_b2280a32): what we stamped is what the bundle self-declares.
+STAMPED_SHORT="$(plutil -extract CFBundleShortVersionString raw "$CONTENTS/Info.plist")"
+STAMPED_BUILD="$(plutil -extract CFBundleVersion raw "$CONTENTS/Info.plist")"
+[ "$STAMPED_SHORT" = "$BUNDLE_SHORT_VERSION" ] \
+  || fail "CFBundleShortVersionString readback mismatch: requested '$BUNDLE_SHORT_VERSION', bundle says '$STAMPED_SHORT'"
+[ "$STAMPED_BUILD" = "$BUNDLE_BUILD_VERSION" ] \
+  || fail "CFBundleVersion readback mismatch: requested '$BUNDLE_BUILD_VERSION', bundle says '$STAMPED_BUILD'"
 codesign --verify --deep --strict "$APP" || fail "codesign --verify --deep --strict failed"
 codesign --verify --deep "$APP" && echo "signature OK"
 file "$BIN/HermesUsage"

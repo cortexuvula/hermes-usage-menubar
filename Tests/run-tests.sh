@@ -49,6 +49,38 @@ codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -1
 test -d "$BUILD_DIR/install/HermesUsage.app" || { echo "FAIL: redirected install produced no bundle"; exit 1; }
 plutil -lint "$BUILD_DIR/install/HermesUsage.app/Contents/Info.plist"
 
+echo "==> Version stamping (t_b2280a32)"
+# Untagged build defaults: never claims a release version. 0.0.0 is the
+# honest non-release short version; build is git-derived (digits only).
+BUNDLED_SHORT="$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")"
+BUNDLED_BUILD="$(plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")"
+[ "$BUNDLED_SHORT" = "0.0.0" ] \
+  || { echo "FAIL: untagged build claims release version $BUNDLED_SHORT, expected 0.0.0"; exit 1; }
+[[ "$BUNDLED_BUILD" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] \
+  || { echo "FAIL: untagged build version '$BUNDLED_BUILD' is not numeric"; exit 1; }
+# Explicit version arguments reach the plist verbatim. Same seeded
+# COLLECTOR_SRC — CI runners have no upstream checkout.
+COLLECTOR_SRC="$SEED" \
+HERMES_USAGE_BUILD_DIR="$BUILD_DIR/pkg2" \
+HERMES_USAGE_INSTALL_DIR="$BUILD_DIR/install2" \
+  ./build.sh 1.2.3 77 > "$BUILD_DIR/bundle-build2.log" 2>&1 \
+  || { echo "build.sh failed with explicit version args:"; tail -20 "$BUILD_DIR/bundle-build2.log"; exit 1; }
+STAMPED_SHORT="$(plutil -extract CFBundleShortVersionString raw "$BUILD_DIR/pkg2/HermesUsage.app/Contents/Info.plist")"
+STAMPED_BUILD="$(plutil -extract CFBundleVersion raw "$BUILD_DIR/pkg2/HermesUsage.app/Contents/Info.plist")"
+[ "$STAMPED_SHORT" = "1.2.3" ] || { echo "FAIL: requested 1.2.3, plist says '$STAMPED_SHORT'"; exit 1; }
+[ "$STAMPED_BUILD" = "77" ] || { echo "FAIL: requested build 77, plist says '$STAMPED_BUILD'"; exit 1; }
+# Non-numeric versions (e.g. pre-release suffixes) are REJECTED before any
+# output is produced — Apple's format for these keys is digits and periods
+# only. Each rejection must exit non-zero.
+for BAD in "1.2.3-beta" "dev" "1.2" "v1.2.3"; do
+  if HERMES_USAGE_BUILD_DIR="$BUILD_DIR/pkg-bad" \
+     HERMES_USAGE_INSTALL_DIR="$BUILD_DIR/install-bad" \
+     ./build.sh "$BAD" >/dev/null 2>&1; then
+    echo "FAIL: build.sh accepted invalid version '$BAD'"; exit 1
+  fi
+done
+echo "version stamping OK: untagged=0.0.0/$BUNDLED_BUILD, explicit=1.2.3/77, invalid values rejected"
+
 echo "==> Repository-cleanliness assertion (blocking item 2)"
 if [ -n "$(git status --porcelain)" ]; then
   echo "FAIL: test run mutated the repository working tree:"
