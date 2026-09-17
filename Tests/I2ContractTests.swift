@@ -1382,11 +1382,20 @@ struct I2Tests {
                 "\"details\":{\"providers\":{" +
                 "\"\(longA)\":{\"estimatedUsd\":0.01}," +
                 "\"\(longB)\":{\"estimatedUsd\":0.02}," +
-                "\"\(longC)\":{\"estimatedUsd\":0.03}" +
+                "\"\(longC)\":{\"estimatedUsd\":0.03}," +
                 "}}}"
             ))
+            // t_ee403c54: EXACT equality is deliberate. resolveProviderCost
+            // folds colliding buckets in sorted-key order, so the sum is the
+            // same left-to-right accumulation in every process: (0.01+0.02)
+            // +0.03. Before the fold order was deterministic, Dictionary
+            // iteration order — randomized per process by the hash seed —
+            // sometimes paired the buckets as (0.02+0.03)+0.01, which is
+            // 0.060000000000000005, and this == failed on 2 of 6 runs.
+            // Do NOT add a tolerance: a band here would re-admit exactly
+            // that nondeterminism as "passing".
             let c3 = resolveProviderCost(rec: threeWay, providerName: prefix, legacyCost: 0.0)
-            expect(c3 == 0.06, "three-way collision sums: 0.01+0.02+0.03 → 0.06, got \(c3.map { String($0) } ?? "nil")")
+            expect(c3 == 0.06, "three-way collision: deterministic sorted-key fold (0.01+0.02)+0.03 → exactly 0.06, got \(c3.map { String($0) } ?? "nil")")
 
             let withNil = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"providerUsage\":{\"\(prefix)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}}," +
@@ -1397,6 +1406,26 @@ struct I2Tests {
             ))
             let cn = resolveProviderCost(rec: withNil, providerName: prefix, legacyCost: 0.0)
             expect(cn == nil, "nil constituent → merged cost unknown (nil), got \(cn.map { String($0) } ?? "nil")")
+        }
+
+        // t_ee403c54: the deterministic fold must still handle a nil
+        // constituent that SORTS FIRST — unknown-before-known exercises the
+        // Double?? merge branch the three-way case never touches.
+        do {
+            let dNil = String(repeating: "d", count: 40) + "-1"
+            let dTwo = String(repeating: "d", count: 40) + "-2"
+            let dThree = String(repeating: "d", count: 40) + "-3"
+            let dPrefix = String(repeating: "d", count: 32)
+            let nilFirst = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(dPrefix)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"\(dNil)\":{\"estimatedUsd\":null}," +
+                "\"\(dTwo)\":{\"estimatedUsd\":0.02}," +
+                "\"\(dThree)\":{\"estimatedUsd\":0.03}" +
+                "}}}"
+            ))
+            let cnf = resolveProviderCost(rec: nilFirst, providerName: dPrefix, legacyCost: 0.0)
+            expect(cnf == nil, "nil constituent sorted first still poisons the merged cost, got \(cnf.map { String($0) } ?? "nil")")
         }
 
         print("A6: collision sum capped at upstream's 1e12 accumulation limit")
@@ -1592,6 +1621,41 @@ struct I2Tests {
             let receiptDefault = formatUsageReceipt(rec, loadState: .success, launchScope: .appDefaultRoot)
             expect(receiptDefault.contains("Collected under: This Mac · All profiles"),
                    "receipt carries the measured (default) scope")
+        }
+
+        print("A1 residual: emptySection scope caveat and store paths derive from the measured launch scope")
+        do {
+            // Production helpers the emptySection view body calls — the same
+            // pattern as modelRowTotalText/Help (slice-1 A7): no local mirror
+            // of the routing, so deleting or re-hardcoding the view helper
+            // fails these assertions.
+            let caveatDefault = emptySectionScopeCaveat(launchScope: .appDefaultRoot)
+            expect(caveatDefault.contains(scopeDescription(launchScope: .appDefaultRoot)),
+                   "default caveat embeds the shared scope description, got '\(caveatDefault)'")
+            let caveatInherited = emptySectionScopeCaveat(launchScope: .inheritedHermesHome)
+            expect(caveatInherited.contains(scopeDescription(launchScope: .inheritedHermesHome)),
+                   "inherited caveat embeds the shared scope description, got '\(caveatInherited)'")
+            // The pre-fix defect asserted the DEFAULT scope ("this device,
+            // all profiles") unconditionally. The inherited label's own
+            // "(may not cover all profiles)" is a disclaimer, not an
+            // assertion — so assert on the defect's actual wording.
+            expect(!caveatInherited.contains("this device"),
+                   "inherited caveat must not carry the hardcoded 'this device' wording, got '\(caveatInherited)'")
+            expect(!caveatInherited.contains(scopeDescription(launchScope: .appDefaultRoot)),
+                   "inherited caveat must not embed the DEFAULT scope description, got '\(caveatInherited)'")
+            expect(caveatDefault != caveatInherited,
+                   "caveat differs between default and inherited scopes")
+            expect(caveatDefault.contains("mid-scan"),
+                   "caveat keeps the empty-file fallback warning")
+
+            let pathsDefault = emptySectionStorePaths(launchScope: .appDefaultRoot)
+            expect(pathsDefault == ["~/.hermes/state.db", "~/.hermes/profiles/*/state.db"],
+                   "default store paths name the app root stores, got \(pathsDefault)")
+            let pathsInherited = emptySectionStorePaths(launchScope: .inheritedHermesHome)
+            expect(pathsInherited != pathsDefault,
+                   "inherited store paths differ from default")
+            expect(!pathsInherited.contains(where: { $0.hasPrefix("~/.hermes") }),
+                   "inherited store paths must not name ~/.hermes as the source, got \(pathsInherited)")
         }
 
         // ---- Palette contrast invariant (t_9b863783) ----

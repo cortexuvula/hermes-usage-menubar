@@ -693,6 +693,32 @@ func scopeDescription(launchScope: CollectionLaunchScope) -> String {
     }
 }
 
+/// A1 residual (t_ee403c54): store paths listed in the empty-state
+/// disclosure, derived from the MEASURED launch scope. Under the app's
+/// default root the conventional ~/.hermes paths are the truth; under an
+/// inherited HERMES_HOME they are NOT — the collection is bounded by that
+/// environment, so naming ~/.hermes/... as the source would mislead.
+/// Tests drive this helper directly (same pattern as modelRowTotalText).
+func emptySectionStorePaths(launchScope: CollectionLaunchScope) -> [String] {
+    switch launchScope {
+    case .appDefaultRoot:
+        return ["~/.hermes/state.db", "~/.hermes/profiles/*/state.db"]
+    case .inheritedHermesHome:
+        return ["state.db stores under the inherited HERMES_HOME"]
+    }
+}
+
+/// A1 residual (t_ee403c54): the empty-state scope caveat. Previously a
+/// hardcoded "Scope: this device, all profiles" string that rendered in the
+/// .noData and quota-only states — which an inherited-HERMES_HOME run also
+/// reaches — asserting "all profiles" while coverage was bounded to the
+/// inherited home. Now composed from the same scopeDescription every other
+/// surface uses, so the empty state cannot disagree with the header.
+func emptySectionScopeCaveat(launchScope: CollectionLaunchScope) -> String {
+    "Scope: \(scopeDescription(launchScope: launchScope)) · reads local databases; "
+        + "a rare fallback path may create an empty file if a store vanishes mid-scan"
+}
+
 /// A1: Capture the launch scope BEFORE any refresh. Call once at app/model
 /// startup: if HERMES_HOME is ambient in the app's own environment, every
 /// collector run this session inherits it, so the scope label must say so
@@ -732,14 +758,40 @@ func resolveProviderCost(rec: UsageRecord, providerName: String, legacyCost: Dou
     // estimatedUsd of every bucket that lands on the same normalized key.
     // Sums are capped like upstream's min(1e12, ...) accumulation so a
     // collision can never produce a value the producer itself cannot emit.
-    let normalized: [String: Double?] = Dictionary(
-        providers.map { (cleanProvider($0.key), $0.value.estimatedUsd) },
-        uniquingKeysWith: { a, b in
-            // Either side unknown → the merged cost is unknown (nil).
-            guard let costA = a, let costB = b else { return nil }
-            return min(1e12, costA + costB)
+    //
+    // Fold order is DETERMINISTIC: buckets combine in sorted-key order,
+    // never in Swift Dictionary iteration order (which is randomized per
+    // process via the hash seed). With three or more colliding buckets the
+    // addition order changes the exact Double result — (0.01+0.02)+0.03 is
+    // 0.06 while (0.01+0.03)+0.02 is 0.060000000000000005 — so a hash-order
+    // fold made the same payload produce different values on different runs.
+    // Display rounds to cents, so no user-visible figure changes; what is
+    // removed is a per-process nondeterminism source (review t_ee403c54).
+    var normalized: [String: Double?] = [:]
+    for key in providers.keys.sorted() {
+        let mapped = cleanProvider(key)
+        let value = providers[key]!.estimatedUsd
+        // NOTE: normalized[mapped] is Double?? — the outer optional is key
+        // presence, the inner is the known/unknown cost. A stored nil (an
+        // earlier unknown constituent) must STAY nil when more buckets
+        // collide: the unobserved part is positive-unknown, so any specific
+        // sum would understate it.
+        if let existing = normalized[mapped] {
+            guard let existingCost = existing, let valueCost = value else {
+                // CAUTION: `normalized[mapped] = nil` would REMOVE the key —
+                // the subscript setter on [String: Double?] reads a bare nil
+                // as Double??.none. We must STORE an inner nil (unknown cost
+                // that stays unknown for later colliding buckets), hence the
+                // explicit .some(nil). A regression test covers a nil bucket
+                // that sorts BEFORE known buckets (t_ee403c54).
+                normalized[mapped] = .some(nil)
+                continue
+            }
+            normalized[mapped] = min(1e12, existingCost + valueCost)
+        } else {
+            normalized[mapped] = value
         }
-    )
+    }
     // Detail data exists: a miss means cost was never observed → nil (em-dash).
     // Do NOT fall back to legacy zero — that would mask an unobserved cost.
     return normalized[providerName] ?? nil
@@ -1601,9 +1653,10 @@ struct ContentView: View {
                 .foregroundStyle(paletteSecondary)
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("~/.hermes/state.db")
-                    Text("~/.hermes/profiles/*/state.db")
-                    Text("Scope: this device, all profiles · reads local databases; a rare fallback path may create an empty file if a store vanishes mid-scan")
+                    ForEach(emptySectionStorePaths(launchScope: model.launchScope), id: \.self) {
+                        Text($0)
+                    }
+                    Text(emptySectionScopeCaveat(launchScope: model.launchScope))
                 }
                 .font(.caption2)
                 .foregroundStyle(paletteSecondary)
