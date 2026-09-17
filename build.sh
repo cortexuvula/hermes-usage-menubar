@@ -41,12 +41,20 @@ if [ -z "$BUNDLE_SHORT_VERSION" ]; then
   BUNDLE_SHORT_VERSION="0.0.0"
 fi
 if [ -z "$BUNDLE_BUILD_VERSION" ]; then
-  COMMIT_COUNT="$(git rev-list --count HEAD 2>/dev/null || true)"
-  if [ -z "$COMMIT_COUNT" ]; then
-    # Xcode-license wall: the Xcode-shim git can refuse to run (exit 69).
-    COMMIT_COUNT="$(/Library/Developer/CommandLineTools/usr/bin/git rev-list --count HEAD 2>/dev/null || true)"
+  # Monotonic where CI provides one (GITHUB_RUN_NUMBER); otherwise derived
+  # from the source tree (commit count of HEAD). Note checkout@v5 shallow
+  # clones make the git count 1 on CI runners — that's why the CI value
+  # wins when it exists. 0 (Apple defines it as 0.0.0) is the last resort.
+  if [ -n "${GITHUB_RUN_NUMBER:-}" ] && [[ "$GITHUB_RUN_NUMBER" =~ ^[0-9]+$ ]]; then
+    BUNDLE_BUILD_VERSION="$GITHUB_RUN_NUMBER"
+  else
+    COMMIT_COUNT="$(git rev-list --count HEAD 2>/dev/null || true)"
+    if [ -z "$COMMIT_COUNT" ]; then
+      # Xcode-license wall: the Xcode-shim git can refuse to run (exit 69).
+      COMMIT_COUNT="$(/Library/Developer/CommandLineTools/usr/bin/git rev-list --count HEAD 2>/dev/null || true)"
+    fi
+    BUNDLE_BUILD_VERSION="${COMMIT_COUNT:-0}"
   fi
-  BUNDLE_BUILD_VERSION="${COMMIT_COUNT:-0}"
 fi
 
 # Apple's documented formats, asserted BEFORE any output is removed or
