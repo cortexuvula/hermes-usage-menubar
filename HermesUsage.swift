@@ -479,7 +479,11 @@ func formatCallAvailability(calls: Int?, unknownCallRows: Int?) -> String {
 /// today's estimate, recorded-history totals, unknown values, data-source explanation.
 /// Excludes: file paths, profile/account identifiers, task labels, raw stderr, session content.
 /// The freshness timestamp is the SNAPSHOT time (updatedAt), never the copy time.
-func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> String {
+/// A1: `launchScope` is the app's measured launch scope — the receipt states
+/// what was actually collected under, never just the producer's constant
+/// intent label.
+func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState,
+                        launchScope: CollectionLaunchScope) -> String {
     var lines: [String] = []
 
     // Header
@@ -497,6 +501,10 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState) -> 
     let scope = rec.details?.scope ?? "device"
     let coverage = rec.details?.coverage ?? "bounded local history"
     lines.append("Scope: \(scope) (intended, not proven complete)")
+    // A1: the MEASURED launch scope — what the collector subprocess was
+    // actually given — stated alongside the producer's intent label, which
+    // is constant "device" regardless of inherited HERMES_HOME.
+    lines.append("Collected under: \(scopeDescription(launchScope: launchScope))")
     lines.append("Coverage: \(coverage)")
 
     // Collection state
@@ -651,42 +659,90 @@ func formatCallCoverageWarning(unknownCallRows: Int) -> String {
     return "Call count unavailable for \(unknownCallRows) usage \(plural)"
 }
 
+// MARK: - A1: Measured collection scope (accuracy audit t_d11f2784)
+
+/// A1: The launch scope the app ACTUALLY gave the collector. "Measured" in
+/// the minimal sense the app can guarantee: the collector subprocess is
+/// launched with a controlled environment (see PythonCollectorExecutor), so
+/// discovery ran either beneath the app-selected default root or beneath an
+/// inherited HERMES_HOME the app did not choose. What the audit forbade is
+/// asserting "All profiles" while an inherited HERMES_HOME quietly narrows
+/// the tree — this enum makes that condition a first-class, testable state.
+enum CollectionLaunchScope: Equatable {
+    /// Collector ran beneath the app-selected default root (~/.hermes when
+    /// the app itself is launched without HERMES_HOME). This is the scope
+    /// "This Mac · All profiles" truthfully describes.
+    case appDefaultRoot
+    /// Collector inherited a HERMES_HOME the app did not set — coverage is
+    /// bounded by that environment, which the label must disclose.
+    case inheritedHermesHome
+}
+
+/// A1: The single scope description rendered in the panel header, menu-bar
+/// help, and receipts. Derived from the launch scope, never asserted from
+/// the collector's own constant `scope: device` intent field — that field
+/// says "device" for a profile-only run (see audit A1 / skill: collector
+/// diagnostics). Note that even appDefaultRoot is bounded discovery under
+/// one Hermes home for this user — the receipt keeps that qualifier.
+func scopeDescription(launchScope: CollectionLaunchScope) -> String {
+    switch launchScope {
+    case .appDefaultRoot:
+        return "This Mac · All profiles"
+    case .inheritedHermesHome:
+        return "This Mac · inherited Hermes home (may not cover all profiles)"
+    }
+}
+
+/// A1: Capture the launch scope BEFORE any refresh. Call once at app/model
+/// startup: if HERMES_HOME is ambient in the app's own environment, every
+/// collector run this session inherits it, so the scope label must say so
+/// for the whole session — not flip per refresh. ANY present value counts as
+/// an inherited override (including empty) — only its absence leaves the
+/// app-selected default discovery in force.
+func captureLaunchScope(environment: [String: String] = ProcessInfo.processInfo.environment) -> CollectionLaunchScope {
+    if environment["HERMES_HOME"] != nil {
+        return .inheritedHermesHome
+    }
+    return .appDefaultRoot
+}
+
+
 /// Resolve the display cost for a provider row (R3).
 /// When detail data exists: normalize its keys to match providerUsage keys,
 /// then look up. A miss with details present means cost was never observed → nil.
 /// When detail data is absent entirely: fall back to legacy providerUsage field
 /// (the only source available in old collector payloads).
+///
+/// A6 (accuracy audit t_d11f2784): detail keys keep up to 64 characters while
+/// providerUsage keys keep 32, so distinct detail buckets can normalize onto
+/// one displayed provider. Upstream accumulates each bucket's estimatedUsd
+/// additively over its rows (hermes-usage.py add_detail: `bucket[key] = min(1e12,
+/// (bucket[key] or 0) + value)`), so buckets sharing a normalized key are
+/// DISJOINT PARTIAL SUMS of the merged provider's cost — not duplicate
+/// observations. Colliding buckets must therefore SUM (regression case:
+/// 0.01 + 0.01 → $0.02, previously undercounted as $0.01). A nil constituent
+/// still makes the merged cost unknown: the unobserved part is positive-
+/// unknown, so any specific sum would understate it.
 func resolveProviderCost(rec: UsageRecord, providerName: String, legacyCost: Double?) -> Double? {
     guard let providers = rec.details?.providers else {
         // No detail data at all — legacy field is the only source.
         return legacyCost
     }
-    // Normalize detail keys to match providerUsage keys.
-    // If two raw keys normalize to the same value, merge conservatively:
-    // any disagreement or any nil → treat as unknown (nil). This preserves
-    // R3's honesty principle: a merged provider must not claim a known cost
-    // it did not observe across all its raw variants.
-    let normalized: [String: ProviderDetail] = Dictionary(
-        providers.map { (cleanProvider($0.key), $0.value) },
+    // Normalize detail keys to match providerUsage keys, summing the
+    // estimatedUsd of every bucket that lands on the same normalized key.
+    // Sums are capped like upstream's min(1e12, ...) accumulation so a
+    // collision can never produce a value the producer itself cannot emit.
+    let normalized: [String: Double?] = Dictionary(
+        providers.map { (cleanProvider($0.key), $0.value.estimatedUsd) },
         uniquingKeysWith: { a, b in
-            // Conservative merge: if either has nil cost, or they disagree, → unknown.
-            // Note: exact float comparison means near-identical float noise reads as unknown;
-            // this is intentional — ambiguous cost data should display as unknown, not guessed.
-            guard let costA = a.estimatedUsd, let costB = b.estimatedUsd, costA == costB else {
-                // Return a detail with nil cost to signal unknown.
-                return ProviderDetail(
-                    rows: nil, calls: nil, unknownCallRows: nil,
-                    tokens: nil, reasoning: nil, cacheRead: nil,
-                    estimatedUsd: nil, actualUsd: nil, latestStatusRows: nil
-                )
-            }
-            // Both agree on a known cost — keep the first (they're identical for cost).
-            return a
+            // Either side unknown → the merged cost is unknown (nil).
+            guard let costA = a, let costB = b else { return nil }
+            return min(1e12, costA + costB)
         }
     )
     // Detail data exists: a miss means cost was never observed → nil (em-dash).
     // Do NOT fall back to legacy zero — that would mask an unobserved cost.
-    return normalized[providerName]?.estimatedUsd
+    return normalized[providerName] ?? nil
 }
 
 // MARK: - Collector runner
@@ -797,6 +853,14 @@ struct PythonCollectorExecutor: CollectorExecuting {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         task.arguments = ["-B", scriptPath, "--force"]
+        // A1: pin the child's environment explicitly to the app's own rather
+        // than leaving implicit inheritance. The scope label is derived from
+        // the same source (captureLaunchScope at model init), so the
+        // displayed scope and the collected tree cannot silently diverge.
+        // Default LaunchAgent context has no HERMES_HOME; if the app itself
+        // was launched with one, it is preserved here AND disclosed by the
+        // scope label as an inherited Hermes home.
+        task.environment = ProcessInfo.processInfo.environment
         let outPipe = Pipe()
         let errPipe = Pipe()
         task.standardOutput = outPipe
@@ -972,6 +1036,11 @@ final class UsageModel: ObservableObject {
     /// relative-age). Bumped every 60s and on wake; does NOT trigger
     /// collection. Views observing this re-render on clock boundaries.
     @Published var displayTick = 0
+    /// A1: the measured launch scope for this session — captured once at
+    /// init from the app's own environment, before any refresh. Views and
+    /// the receipt derive their scope wording from it instead of asserting
+    /// "All profiles" unconditionally.
+    let launchScope: CollectionLaunchScope
 
     private var startedOnce = false
     /// Executor injected for tests; production resolves from the bundle path
@@ -980,11 +1049,16 @@ final class UsageModel: ObservableObject {
     private let collectorTimeout: TimeInterval
 
     init(executor: CollectorExecuting? = nil,
-         collectorTimeout: TimeInterval = CollectorRunner.defaultTimeout) {
+         collectorTimeout: TimeInterval = CollectorRunner.defaultTimeout,
+         launchScope: CollectionLaunchScope = captureLaunchScope()) {
         self.executor = executor ?? PythonCollectorExecutor(
             scriptPath: Bundle.main.resourceURL!
                 .appendingPathComponent("collector/hermes-usage.py").path)
         self.collectorTimeout = collectorTimeout
+        // A1: capture the effective environment once, before the first
+        // collector run, so the scope label describes what the child will
+        // actually inherit.
+        self.launchScope = launchScope
         // Kick off collection immediately at launch, not on first popover open.
         startIfNeeded()
         // R7: start lightweight display clock (60s interval, no collection).
@@ -1322,11 +1396,22 @@ struct ContentView: View {
             // First-run failure: show wrapped diagnostic with retry
             failedSection(diagnostic)
         case .noData:
+            // A5: a quota-only record (hasLocalStats=false + accounts) is a
+            // GENUINE no-local-data case, but its account observations are
+            // valid data the collector deliberately provides. Local-usage
+            // emptiness must not suppress them — route the two independently.
             emptySection
+            if let rec = model.record, let accounts = rec.accounts, !accounts.isEmpty {
+                accountsSection(rec)
+            }
         case .success, .stale:
             if let rec = model.record {
                 if rec.hasLocalStats == false {
+                    // A5: same quota-only reachability as .noData.
                     emptySection
+                    if let accounts = rec.accounts, !accounts.isEmpty {
+                        accountsSection(rec)
+                    }
                 } else {
                     todaySection(rec)
                     weekSection(rec)
@@ -1353,9 +1438,10 @@ struct ContentView: View {
                     ProgressView().controlSize(.small)
                 }
             }
-            Text("This Mac · All profiles")
+            Text(scopeDescription(launchScope: model.launchScope))
                 .font(.caption)
                 .foregroundStyle(paletteSecondary)
+                .help("Bounded collection under this app's effective Hermes home; discovery is local and budgeted, not a complete inventory of the machine.")
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
@@ -1538,9 +1624,12 @@ struct ContentView: View {
                 .font(.subheadline.weight(.semibold))
                 .help("Collection timestamp: \(model.updatedAt?.formatted(date: .complete, time: .shortened) ?? "unknown")")
             HStack(spacing: 14) {
+                // A7: nil is "not observed" and must never render as an
+                // observed zero — same nil→"—" / 0→"0" convention as
+                // compactCost (HermesUsage.swift:136-141).
                 statCell(label: "Tokens",
-                         value: compactTokens(Double(rec.todayTotalTokens ?? 0)),
-                         help: rec.todayTotalTokens.map { exactTokens($0) })
+                         value: rec.todayTotalTokens.map { compactTokens(Double($0)) } ?? "—",
+                         help: rec.todayTotalTokens.map { exactTokens($0) } ?? "Tokens not observed; not zero")
                 statCell(label: "Prompts",
                          value: rec.todayPrompts.map(String.init) ?? "—",
                          help: rec.todayPrompts.map { "\($0) prompts" })
@@ -1628,8 +1717,20 @@ struct ContentView: View {
                     ? "Totals from partial local collection — some older activity may be omitted."
                     : "Totals from complete local collection on this Mac.")
             HStack(spacing: 10) {
-                let allTokens = rec.details?.totals?.tokens ?? rec.modelUsage?.values.map(\.totalTokens).reduce(0, +) ?? 0
-                totalChip("Tokens", compactTokens(Double(allTokens)), help: exactTokens(allTokens))
+                // A7: totals chips never coerce a missing total into an
+                // observed zero. Order of precedence: recorded detail total,
+                // then (only when at least one component was actually
+                // observed anywhere) the model-sum fallback, else "—".
+                let recordedTokens = rec.details?.totals?.tokens
+                let fallbackTokens: Int? = {
+                    guard rec.details?.totals == nil,
+                          let models = rec.modelUsage,
+                          models.values.contains(where: { $0.hasAnyComponent }) else { return nil }
+                    return models.values.map(\.totalTokens).reduce(0, +)
+                }()
+                let allTokens = recordedTokens ?? fallbackTokens
+                totalChip("Tokens", allTokens.map { compactTokens(Double($0)) } ?? "—",
+                          help: allTokens.map { exactTokens($0) } ?? "Tokens not observed; not zero")
                 // F6: "Reported calls" not "Calls"
                 totalChip("Reported calls", rec.details?.totals?.calls.map(String.init) ?? "—",
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
@@ -1928,10 +2029,12 @@ struct ContentView: View {
                             .foregroundStyle(paletteSecondary)
                             .frame(width: 64, alignment: .trailing)
                             .help(costHelp(costUsd))
-                        Text(compactTokens(Double(providerUsage.tokens ?? 0)))
+                        // A7: nil tokens are "not observed", rendered as "—"
+                        // with an explicit help string — never an observed 0.
+                        Text(providerUsage.tokens.map { compactTokens(Double($0)) } ?? "—")
                             .font(.caption.monospacedDigit())
                             .frame(width: 52, alignment: .trailing)
-                            .help(exactTokens(providerUsage.tokens ?? 0))
+                            .help(providerUsage.tokens.map { exactTokens($0) } ?? "Tokens not observed; not zero")
                     }
                     .padding(.vertical, 1)
                 }
@@ -2358,7 +2461,8 @@ struct ContentView: View {
                         feedbackTimer?.cancel()
                     
                         if let rec = model.record {
-                            let receipt = formatUsageReceipt(rec, loadState: model.loadState)
+                            let receipt = formatUsageReceipt(rec, loadState: model.loadState,
+                                                             launchScope: model.launchScope)
                             let pasteboard = NSPasteboard.general
                             pasteboard.clearContents()
                             if pasteboard.setString(receipt, forType: .string) {
@@ -2438,12 +2542,24 @@ extension ModelUsage {
     var totalTokens: Int {
         (inputTokens ?? 0) + (outputTokens ?? 0) + (cacheReadInputTokens ?? 0) + (cacheCreationInputTokens ?? 0)
     }
+
+    /// A7: true when any of the four components was actually observed.
+    /// An all-nil ModelUsage decodes fine, but its total is a sum of assumed
+    /// zeros — it must not be presented as a measured value anywhere.
+    var hasAnyComponent: Bool {
+        inputTokens != nil || outputTokens != nil || cacheReadInputTokens != nil || cacheCreationInputTokens != nil
+    }
 }
 
 // MARK: - B4: Token makeup
 
 /// B4: Build accessibility label for a model row with token components.
 func formatModelAccessibilityLabel(modelName: String, mu: ModelUsage, reasoning: Int? = nil) -> String {
+    // A7: an all-nil ModelUsage has no observed components — its zero total
+    // is assumed, not measured. Name the absence instead of announcing "0".
+    guard mu.hasAnyComponent else {
+        return "\(modelName), token components not observed"
+    }
     let total = mu.totalTokens
     var label = "\(modelName), \(tokenCountString(total)) total"
     let input = mu.inputTokens ?? 0

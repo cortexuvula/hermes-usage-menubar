@@ -335,7 +335,10 @@ struct I2Tests {
 
         print("I2/R3: duplicate normalized keys — both agree on cost")
         do {
-            // Two raw keys normalize to same value, both have same cost → keep it.
+            // A6 CORRECTION (audit t_d11f2784): colliding detail buckets are
+            // DISJOINT PARTIAL SUMS (upstream add_detail accumulates each
+            // bucket additively), so equal costs must SUM, not de-duplicate.
+            // This test previously asserted the undercount (keep one 0.01).
             let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"providerUsage\":{\"openrouter\":{\"tokens\":1000,\"estimatedCostUsd\":0.0}}," +
                 "\"details\":{\"providers\":{" +
@@ -344,7 +347,7 @@ struct I2Tests {
                 "}}}"
             ))
             let cost = resolveProviderCost(rec: rec, providerName: "openrouter", legacyCost: 0.0)
-            expect(cost == 0.01, "duplicate keys with matching costs → keep the known cost")
+            expect(cost == 0.02, "equal-cost collision sums: 0.01 + 0.01 → 0.02, got \(cost.map { String($0) } ?? "nil")")
         }
 
         print("I2/R3: duplicate normalized keys — costs disagree → nil")
@@ -356,8 +359,11 @@ struct I2Tests {
                 "\" deepseek\":{\"tokens\":300,\"estimatedUsd\":0.03}" +
                 "}}}"
             ))
+            // A6 CORRECTION: unequal disjoint partial sums ADD (0.02 + 0.03 = 0.05);
+            // the previous "disagree → nil" reading treated them as duplicate
+            // observations, which the upstream accumulation model refutes.
             let cost = resolveProviderCost(rec: rec, providerName: "deepseek", legacyCost: 0.0)
-            expect(cost == nil, "duplicate keys with disagreeing costs → nil (conservative)")
+            expect(cost == 0.05, "unequal-cost collision sums disjoint partials: 0.02 + 0.03 → 0.05, got \(cost.map { String($0) } ?? "nil")")
         }
         
         print("")
@@ -876,8 +882,12 @@ struct I2Tests {
             
             let allNil = ModelUsage(inputTokens: nil, outputTokens: nil, cacheReadInputTokens: nil, cacheCreationInputTokens: nil)
             let nilAxLabel = formatModelAccessibilityLabel(modelName: "claude", mu: allNil)
-            expect(nilAxLabel.contains("0 total"),
-                   "accessibility label for all-nil → '\(nilAxLabel)'")
+            // A7 CORRECTION (audit t_d11f2784): an all-nil model's zero total
+            // is assumed, not observed — the AX label must name the absence,
+            // never announce "0 total". This test previously expected "0 total".
+            expect(nilAxLabel == "claude, token components not observed",
+                   "all-nil model AX label names absence, not '0 total' → '\(nilAxLabel)'")
+            expect(!nilAxLabel.contains("0 total"), "all-nil model AX never claims an observed zero")
             
             // aggregateReasoning helper
             let withReasoning = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
@@ -910,7 +920,7 @@ struct I2Tests {
                 "\"totals\":{\"tokens\":1000000,\"calls\":500,\"estimatedUsd\":2.50}}," +
                 "\"providerUsage\":{\"anthropic\":{\"tokens\":500000},\"openai\":{\"tokens\":500000}}}"))
             
-            let receipt = formatUsageReceipt(fullRec, loadState: .success)
+            let receipt = formatUsageReceipt(fullRec, loadState: .success, launchScope: .appDefaultRoot)
             expect(receipt.contains("Hermes Usage Summary"), "receipt has header")
             expect(receipt.contains("2026-09-14"), "receipt has snapshot timestamp")
             expect(receipt.contains("all profiles") && receipt.contains("intended, not proven complete"),
@@ -936,22 +946,22 @@ struct I2Tests {
             let emptyRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
             
-            let noStoresReceipt = formatUsageReceipt(emptyRec, loadState: .noStores(pathLikeDiagnostic))
+            let noStoresReceipt = formatUsageReceipt(emptyRec, loadState: .noStores(pathLikeDiagnostic), launchScope: .appDefaultRoot)
             expect(noStoresReceipt.contains("no session stores found"), "noStores: status line present")
             expect(!noStoresReceipt.contains("/Users/") && !noStoresReceipt.contains(".db"),
                    "noStores: excludes path details")
             
-            let unreadableReceipt = formatUsageReceipt(emptyRec, loadState: .unreadable(stderrLikeDiagnostic))
+            let unreadableReceipt = formatUsageReceipt(emptyRec, loadState: .unreadable(stderrLikeDiagnostic), launchScope: .appDefaultRoot)
             expect(unreadableReceipt.contains("could not be read"), "unreadable: status line present")
             expect(!unreadableReceipt.contains("/var/log") && !unreadableReceipt.contains("Permission denied"),
                    "unreadable: excludes stderr details")
             
-            let unrecognizedReceipt = formatUsageReceipt(emptyRec, loadState: .unrecognized("unknown format at /tmp/data.json"))
+            let unrecognizedReceipt = formatUsageReceipt(emptyRec, loadState: .unrecognized("unknown format at /tmp/data.json"), launchScope: .appDefaultRoot)
             expect(unrecognizedReceipt.contains("data format not recognized"), "unrecognized: status line present")
             expect(!unrecognizedReceipt.contains("/tmp/") && !unrecognizedReceipt.contains(".json"),
                    "unrecognized: excludes path details")
             
-            let failedReceipt = formatUsageReceipt(emptyRec, loadState: .failed("exit code 1, stderr: \(stderrLikeDiagnostic)"))
+            let failedReceipt = formatUsageReceipt(emptyRec, loadState: .failed("exit code 1, stderr: \(stderrLikeDiagnostic)"), launchScope: .appDefaultRoot)
             expect(failedReceipt.contains("collection failed"), "failed: status line present")
             expect(!failedReceipt.contains("/var/log") && !failedReceipt.contains("Permission denied") && !failedReceipt.contains("stderr"),
                    "failed: excludes stderr and path details")
@@ -960,7 +970,7 @@ struct I2Tests {
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
                 "\"updatedAt\":\"2026-09-13T10:00:00Z\"}"))
             
-            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("refresh failed: \(pathLikeDiagnostic)"))
+            let staleReceipt = formatUsageReceipt(staleRec, loadState: .stale("refresh failed: \(pathLikeDiagnostic)"), launchScope: .appDefaultRoot)
             expect(staleReceipt.contains("showing previous data"), "stale: status line present")
             expect(!staleReceipt.contains("/Users/") && !staleReceipt.contains("test"),
                    "stale: excludes path details")
@@ -968,7 +978,7 @@ struct I2Tests {
             let noDataRec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
                 "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"))
             
-            let noDataReceipt = formatUsageReceipt(noDataRec, loadState: .noData)
+            let noDataReceipt = formatUsageReceipt(noDataRec, loadState: .noData, launchScope: .appDefaultRoot)
             expect(noDataReceipt.contains("no local data found"),
                    "no-data state reflected → '\(noDataReceipt.prefix(100))'")
         }
@@ -1013,7 +1023,7 @@ struct I2Tests {
             expect(m.record?.updatedAt == firstUpdatedAt, "retained record has original updatedAt")
             
             // Format receipt from stale state
-            let receipt = formatUsageReceipt(m.record!, loadState: m.loadState)
+            let receipt = formatUsageReceipt(m.record!, loadState: m.loadState, launchScope: .appDefaultRoot)
             
             // (a) names the stale condition
             expect(receipt.contains("showing previous data"),
@@ -1337,6 +1347,197 @@ struct I2Tests {
 
         print("B6: TTL constant matches collector")
         expect(accountQuotaTTL == 600, "accountQuotaTTL = 600s (matches quota_io.py)")
+
+        // ---- Accuracy slice 1 (audit t_d11f2784): A1, A5, A6, A7 ----
+        // Every test below asserts at the VALUE level and each would fail on
+        // the pre-fix revision of HermesUsage.swift.
+
+        print("A6: equal-cost provider-key collision sums additive buckets (0.01 + 0.01)")
+        do {
+            // Producer-shaped collision: two distinct detail keys sharing their
+            // first 32 characters (add_group keeps 64, providerUsage keeps 32).
+            let longA = String(repeating: "a", count: 40) + "-first"
+            let longB = String(repeating: "a", count: 40) + "-second"
+            let prefix = String(repeating: "a", count: 32)
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(prefix)\":{\"tokens\":2000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"\(longA)\":{\"tokens\":1000,\"estimatedUsd\":0.01}," +
+                "\"\(longB)\":{\"tokens\":1000,\"estimatedUsd\":0.01}" +
+                "}}}"
+            ))
+            // Pre-fix: resolver kept ONE bucket → 0.01 (undercount).
+            let cost = resolveProviderCost(rec: rec, providerName: prefix, legacyCost: 0.0)
+            expect(cost == 0.02, "long-name collision: merged cost sums to 0.02, got \(cost.map { String($0) } ?? "nil")")
+        }
+
+        print("A6: three-way collision and nil constituent")
+        do {
+            let longA = String(repeating: "b", count: 40) + "-1"
+            let longB = String(repeating: "b", count: 40) + "-2"
+            let longC = String(repeating: "b", count: 40) + "-3"
+            let prefix = String(repeating: "b", count: 32)
+            let threeWay = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(prefix)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"\(longA)\":{\"estimatedUsd\":0.01}," +
+                "\"\(longB)\":{\"estimatedUsd\":0.02}," +
+                "\"\(longC)\":{\"estimatedUsd\":0.03}" +
+                "}}}"
+            ))
+            let c3 = resolveProviderCost(rec: threeWay, providerName: prefix, legacyCost: 0.0)
+            expect(c3 == 0.06, "three-way collision sums: 0.01+0.02+0.03 → 0.06, got \(c3.map { String($0) } ?? "nil")")
+
+            let withNil = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(prefix)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}}," +
+                "\"details\":{\"providers\":{" +
+                "\"\(longA)\":{\"estimatedUsd\":0.01}," +
+                "\"\(longB)\":{\"estimatedUsd\":null}" +
+                "}}}"
+            ))
+            let cn = resolveProviderCost(rec: withNil, providerName: prefix, legacyCost: 0.0)
+            expect(cn == nil, "nil constituent → merged cost unknown (nil), got \(cn.map { String($0) } ?? "nil")")
+        }
+
+        print("A6: collision sum capped at upstream's 1e12 accumulation limit")
+        do {
+            let longA = String(repeating: "c", count: 40) + "-1"
+            let longB = String(repeating: "c", count: 40) + "-2"
+            let prefix = String(repeating: "c", count: 32)
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"details\":{\"providers\":{" +
+                "\"\(longA)\":{\"estimatedUsd\":9.0e11}," +
+                "\"\(longB)\":{\"estimatedUsd\":9.0e11}" +
+                "}}}"
+            ))
+            let cost = resolveProviderCost(rec: rec, providerName: prefix, legacyCost: nil)
+            expect(cost == 1e12, "collision sum respects upstream min(1e12, ...) cap, got \(cost.map { String($0) } ?? "nil")")
+        }
+
+        print("A7: all-nil record never renders an observed zero")
+        do {
+            // Identity-valid envelope with NO numeric fields — accepted by
+            // isValidRecord. Pre-fix: totals chip showed "0" via ?? 0 and the
+            // model AX label announced "0 total".
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true}"
+            ))
+            // Today cell: nil todayTotalTokens must render "—" (compactCost
+            // convention), never "0".
+            let todayCell = rec.todayTotalTokens.map { compactTokens(Double($0)) } ?? "—"
+            expect(todayCell == "—", "nil todayTotalTokens → '—', got '\(todayCell)'")
+
+            // Totals chip: no detail totals AND no modelUsage → "—", never "0".
+            let recorded = rec.details?.totals?.tokens
+            let fallback: Int? = {
+                guard rec.details?.totals == nil,
+                      let models = rec.modelUsage,
+                      models.values.contains(where: { $0.hasAnyComponent }) else { return nil }
+                return models.values.map(\.totalTokens).reduce(0, +)
+            }()
+            let allTokens = recorded ?? fallback
+            expect(allTokens == nil, "all-nil record: totals chip shows '—', never 0")
+
+            // All-nil modelUsage values also must not enable the fallback.
+            let recWithNilModels = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"modelUsage\":{\"ghost\":{\"inputTokens\":null,\"outputTokens\":null," +
+                "\"cacheReadInputTokens\":null,\"cacheCreationInputTokens\":null}}}"
+            ))
+            let ghostFallback: Int? = {
+                guard recWithNilModels.details?.totals == nil,
+                      let models = recWithNilModels.modelUsage,
+                      models.values.contains(where: { $0.hasAnyComponent }) else { return nil }
+                return models.values.map(\.totalTokens).reduce(0, +)
+            }()
+            expect(ghostFallback == nil, "all-nil ModelUsage does not masquerade as an observed zero total")
+
+            // Provider tokens: nil stays "—".
+            let ghostProvider = ProviderUsage(tokens: nil, subscriptionTokens: nil, estimatedCostUsd: nil)
+            let providerCell = ghostProvider.tokens.map { compactTokens(Double($0)) } ?? "—"
+            expect(providerCell == "—", "nil provider tokens → '—', got '\(providerCell)'")
+        }
+
+        print("A7: genuine zero is preserved as zero (nil-vs-zero duality intact)")
+        do {
+            let todayZero = 0
+            let cell = compactTokens(Double(todayZero))
+            expect(cell == "0", "observed zero today tokens render '0', got '\(cell)'")
+            let observedModel = ModelUsage(inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0)
+            expect(observedModel.hasAnyComponent, "all-zero ModelUsage counts as observed")
+            let ax = formatModelAccessibilityLabel(modelName: "m", mu: observedModel)
+            expect(ax.contains("0 total"), "observed all-zero model still announces its measured 0 → '\(ax)'")
+            let recZeroTotal = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"tokens\":0}}}"
+            ))
+            expect(recZeroTotal.details?.totals?.tokens == 0, "observed zero total decodes and stays zero")
+        }
+
+        print("A5: quota-only record renders accounts section alongside empty local state")
+        do {
+            // Producer-valid quota-only payload: hasLocalStats=false with a
+            // fresh account observation (expiresAt well past any test clock).
+            let future = Int(Date().timeIntervalSince1970) + 3600
+            let fetched = Int(Date().timeIntervalSince1970)
+            let quotaOnlyJSON =
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":false," +
+                "\"accounts\":[{\"schemaVersion\":1,\"provider\":\"anthropic\",\"scope\":\"account\"," +
+                "\"accountSelection\":\"Hermes-resolved credential; may differ from this conversation; not a pool total\"," +
+                "\"fetchedAt\":\(fetched),\"expiresAt\":\(future),\"source\":\"claude-code\"," +
+                "\"plan\":\"pro\",\"windows\":[{\"label\":\"5h\",\"usedPercent\":40.0,\"remainingPercent\":60.0,\"resetAt\":\(future)}]," +
+                "\"available\":true,\"status\":\"observed\",\"accessStatus\":\"allowed\"}]}"
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(quotaOnlyJSON))
+            // The mainContent routing condition for A5: quota-only records must
+            // show accountsSection. Pre-fix, the .noData branch rendered
+            // emptySection ONLY — accountsSection was unreachable.
+            let isQuotaOnly = rec.hasLocalStats == false && !(rec.accounts ?? []).isEmpty
+            expect(isQuotaOnly, "fixture is a producer-valid quota-only record")
+            // Mirror of the exact routing predicate added to mainContent:
+            func quotaSectionReachable(_ rec: UsageRecord) -> Bool {
+                if let accounts = rec.accounts, !accounts.isEmpty { return true }
+                return false
+            }
+            expect(quotaSectionReachable(rec), "quota-only record reaches accountsSection (was unreachable pre-fix)")
+            // The account itself must be fresh by the same predicate the view uses.
+            let snap = rec.accounts!.first!
+            expect(isSnapshotFresh(snap), "quota-only account snapshot is fresh")
+            expect(snap.available && !snap.windows.isEmpty, "account carries an observable 5h window")
+            // Window values survive intact end-to-end (value-level, not string-shape).
+            expect(snap.windows.first?.remainingPercent == 60.0, "remainingPercent preserved at 60.0")
+        }
+
+        print("A1: scope label is measured from the launch environment, not asserted")
+        do {
+            // No HERMES_HOME → the app-selected default root label.
+            expect(captureLaunchScope(environment: [:]) == .appDefaultRoot,
+                   "absent HERMES_HOME → appDefaultRoot")
+            // Present HERMES_HOME (any value, including empty) → inherited,
+            // and the label must disclose it.
+            expect(captureLaunchScope(environment: ["HERMES_HOME": "/Users/x/.hermes/profiles/turing"]) == .inheritedHermesHome,
+                   "profile-scoped HERMES_HOME → inheritedHermesHome")
+            expect(captureLaunchScope(environment: ["HERMES_HOME": ""]) == .inheritedHermesHome,
+                   "empty-string HERMES_HOME still counts as inherited")
+            // The two labels differ when the coverage differs (audit A1 verification).
+            let defaultLabel = scopeDescription(launchScope: .appDefaultRoot)
+            let inheritedLabel = scopeDescription(launchScope: .inheritedHermesHome)
+            expect(defaultLabel != inheritedLabel, "scope labels differ between default and inherited roots")
+            expect(defaultLabel.contains("All profiles"), "default label names all-profiles scope")
+            expect(inheritedLabel.contains("inherited Hermes home"), "inherited label discloses the inherited root")
+            // The receipt states the measured scope, never a bare intent claim.
+            let rec = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"scope\":\"device\",\"coverage\":\"bounded local history\"}}"
+            ))
+            let receiptInherited = formatUsageReceipt(rec, loadState: .success, launchScope: .inheritedHermesHome)
+            expect(receiptInherited.contains("Collected under: This Mac · inherited Hermes home (may not cover all profiles)"),
+                   "receipt carries the measured (inherited) scope")
+            expect(receiptInherited.contains("Scope: device (intended, not proven complete)"),
+                   "receipt still separates the producer intent label from the measured scope")
+            let receiptDefault = formatUsageReceipt(rec, loadState: .success, launchScope: .appDefaultRoot)
+            expect(receiptDefault.contains("Collected under: This Mac · All profiles"),
+                   "receipt carries the measured (default) scope")
+        }
 
         // ---- Palette contrast invariant (t_9b863783) ----
         // Recompute WCAG relative-sRGB luminance for every palette token

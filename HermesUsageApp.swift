@@ -38,7 +38,7 @@ struct HermesUsageApp: App {
         } else {
             parts.append("\(age.capitalized): —")
         }
-        parts.append("This Mac · all profiles")
+        parts.append(scopeDescription(launchScope: model.launchScope))
         if let u = model.updatedAt {
             parts.append("Updated \(relativeAgeFormatter.localizedString(for: u, relativeTo: Date()))")
         }
@@ -80,7 +80,7 @@ struct MenuBarLabelView: View {
         } else {
             parts.append("\(age.capitalized): —")
         }
-        parts.append("This Mac · all profiles")
+        parts.append(scopeDescription(launchScope: model.launchScope))
         if let u = model.updatedAt {
             parts.append("Updated \(relativeAgeFormatter.localizedString(for: u, relativeTo: Date()))")
         }
