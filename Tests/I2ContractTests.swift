@@ -1506,6 +1506,101 @@ struct I2Tests {
             expect(cnf == nil, "nil constituent sorted first still poisons the merged cost, got \(cnf.map { String($0) } ?? "nil")")
         }
 
+        // t_f0026ac1 (ui-consultant strengthening): the deterministic fold
+        // orders the ORIGINAL detail keys, so its result must not depend on
+        // the textual key order of the JSON payload either. The variants
+        // below pin that input-order independence directly: same three
+        // colliding keys, same value per key, only the JSON order changes.
+        // Every assertion is exact (==) — a tolerance would re-admit the
+        // per-process hash-order nondeterminism the fold removed.
+        print("A6: three-way collision — input-order independence (JSON key orders rotated and reversed)")
+        do {
+            let b1 = String(repeating: "b", count: 40) + "-1"  // 0.01
+            let b2 = String(repeating: "b", count: 40) + "-2"  // 0.02
+            let b3 = String(repeating: "b", count: 40) + "-3"  // 0.03
+            let prefix = String(repeating: "b", count: 32)
+            func threeWayPayload(_ order: [(key: String, value: String)]) -> Data {
+                jsonData("{\"providerUsage\":{\"\(prefix)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}},"
+                    + "\"details\":{\"providers\":{"
+                    + order.map { "\"\($0.key)\":{\"estimatedUsd\":\($0.value)}" }.joined(separator: ",")
+                    + "}}}")
+            }
+            // Rotated textual order: -2, -3, -1.
+            let rotated = try! JSONDecoder().decode(UsageRecord.self, from: threeWayPayload([
+                (key: b2, value: "0.02"), (key: b3, value: "0.03"), (key: b1, value: "0.01"),
+            ]))
+            let cRotated = resolveProviderCost(rec: rotated, providerName: prefix, legacyCost: 0.0)
+            expect(cRotated == 0.06, "three-way collision, JSON order (-2,-3,-1): same exact 0.06 as the canonical order, got \(cRotated.map { String($0) } ?? "nil")")
+
+            // Reversed textual order: -3, -2, -1.
+            let reversed = try! JSONDecoder().decode(UsageRecord.self, from: threeWayPayload([
+                (key: b3, value: "0.03"), (key: b2, value: "0.02"), (key: b1, value: "0.01"),
+            ]))
+            let cReversed = resolveProviderCost(rec: reversed, providerName: prefix, legacyCost: 0.0)
+            expect(cReversed == 0.06, "three-way collision, JSON order (-3,-2,-1): same exact 0.06 as the canonical order, got \(cReversed.map { String($0) } ?? "nil")")
+        }
+
+        // t_f0026ac1: pin BOTH nil-position directions. The sorted-first
+        // case is pinned above (d…-1 nil); this is the sorted-LAST case.
+        // The nil key also appears FIRST in the JSON text while sorting
+        // last, so the fixture simultaneously rules out any reliance on
+        // textual order for the nil-propagation branch.
+        print("A6: nil constituent sorting LAST (after known buckets) poisons the merged cost")
+        do {
+            let dOne = String(repeating: "d", count: 40) + "-1"  // 0.02
+            let dTwo = String(repeating: "d", count: 40) + "-2"  // 0.03
+            let dNilLast = String(repeating: "d", count: 40) + "-9"  // nil, sorts after -1 and -2
+            let dPrefixLast = String(repeating: "d", count: 32)
+            // Control: the same two known buckets WITHOUT the nil merge to
+            // exactly 0.05, so the nil below is the only possible cause.
+            let knownOnly = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(dPrefixLast)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}},"
+                + "\"details\":{\"providers\":{"
+                + "\"\(dOne)\":{\"estimatedUsd\":0.02},"
+                + "\"\(dTwo)\":{\"estimatedUsd\":0.03}"
+                + "}}}"
+            ))
+            let cKnown = resolveProviderCost(rec: knownOnly, providerName: dPrefixLast, legacyCost: 0.0)
+            expect(cKnown == 0.05, "known-only control: 0.02+0.03 → exactly 0.05, got \(cKnown.map { String($0) } ?? "nil")")
+
+            let nilLast = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(dPrefixLast)\":{\"tokens\":3000,\"estimatedCostUsd\":0.0}},"
+                + "\"details\":{\"providers\":{"
+                + "\"\(dNilLast)\":{\"estimatedUsd\":null},"
+                + "\"\(dTwo)\":{\"estimatedUsd\":0.03},"
+                + "\"\(dOne)\":{\"estimatedUsd\":0.02}"
+                + "}}}"
+            ))
+            let cNilLast = resolveProviderCost(rec: nilLast, providerName: dPrefixLast, legacyCost: 0.0)
+            expect(cNilLast == nil, "nil constituent sorted last (JSON text order first) still poisons the merged cost, got \(cNilLast.map { String($0) } ?? "nil")")
+        }
+
+        // t_f0026ac1: four colliding buckets — the association order now
+        // varies across three merges instead of a single pair. Sorted-key
+        // fold is (((0.01+0.02)+0.03)+0.06) → exactly 0.12; a different
+        // association, e.g. ((0.01+0.06)+0.02)+0.03, yields
+        // 0.12000000000000001 — so the exact == is load-bearing.
+        print("A6: four-way collision — variable association order beyond a single pair")
+        do {
+            let e1 = String(repeating: "e", count: 40) + "-1"  // 0.01
+            let e2 = String(repeating: "e", count: 40) + "-2"  // 0.02
+            let e3 = String(repeating: "e", count: 40) + "-3"  // 0.03
+            let e4 = String(repeating: "e", count: 40) + "-4"  // 0.06
+            let ePrefix = String(repeating: "e", count: 32)
+            // Textual order deliberately scrambled: -3, -1, -4, -2.
+            let fourWay = try! JSONDecoder().decode(UsageRecord.self, from: jsonData(
+                "{\"providerUsage\":{\"\(ePrefix)\":{\"tokens\":4000,\"estimatedCostUsd\":0.0}},"
+                + "\"details\":{\"providers\":{"
+                + "\"\(e3)\":{\"estimatedUsd\":0.03},"
+                + "\"\(e1)\":{\"estimatedUsd\":0.01},"
+                + "\"\(e4)\":{\"estimatedUsd\":0.06},"
+                + "\"\(e2)\":{\"estimatedUsd\":0.02}"
+                + "}}}"
+            ))
+            let c4 = resolveProviderCost(rec: fourWay, providerName: ePrefix, legacyCost: 0.0)
+            expect(c4 == 0.12, "four-way collision: deterministic sorted-key fold ((0.01+0.02)+0.03)+0.06 → exactly 0.12, got \(c4.map { String($0) } ?? "nil")")
+        }
+
         print("A6: collision sum capped at upstream's 1e12 accumulation limit")
         do {
             let longA = String(repeating: "c", count: 40) + "-1"
