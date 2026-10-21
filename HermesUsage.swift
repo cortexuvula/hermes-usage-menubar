@@ -425,6 +425,52 @@ func hasNilProviderCost(_ rec: UsageRecord) -> Bool {
     }
 }
 
+// MARK: - t_d59ed1ce: qualified totals cost chip
+
+/// t_d59ed1ce: True when the Collected-history "Est. USD" chip must be
+/// qualified because at least one contributing provider's cost is unknown.
+/// Owner ruling (B), 2026-10-21: reuse the F5 legend predicate so the chip
+/// and the `:1854` legend can never disagree, plus the collector's own
+/// status breakdown for the case where the provider-level fold is clean.
+func hasUnknownCostContributor(_ rec: UsageRecord) -> Bool {
+    if hasNilProviderCost(rec) { return true }
+    return (rec.details?.totals?.latestStatusRows?["unknown"] ?? 0) > 0
+}
+
+/// t_d59ed1ce: Count of unknown contributors for the qualified help text.
+/// Prefers the collector's own status breakdown when it reports any unknown
+/// row; falls back to counting nil-cost provider rows via the same
+/// resolveProviderCost fold the section uses.
+func unknownCostContributorCount(_ rec: UsageRecord) -> Int {
+    if let unknown = rec.details?.totals?.latestStatusRows?["unknown"], unknown > 0 { return unknown }
+    guard let providerUsage = rec.providerUsage else { return 0 }
+    return providerUsage.keys.count { name in
+        resolveProviderCost(rec: rec, providerName: name, legacyCost: providerUsage[name]?.estimatedCostUsd) == nil
+    }
+}
+
+/// t_d59ed1ce: Chip text for the Collected-history Est. USD total.
+/// Gate false → compactCost unchanged (a genuine $0.00 stays "$0.00" — the
+/// gate is about unknown contributors, not about zero). Gate true with a
+/// non-nil totals value → qualified "≥ $0.02". Totals nil → "—" unchanged.
+func totalsCostChipText(_ rec: UsageRecord) -> String {
+    guard let n = rec.details?.totals?.estimatedUsd else { return compactCost(nil) }
+    return hasUnknownCostContributor(rec) ? "≥ \(compactCost(n))" : compactCost(n)
+}
+
+/// t_d59ed1ce: Help text for the Collected-history Est. USD chip. When
+/// qualifying, never claim a bare "Recorded estimate" — state that the shown
+/// value is the sum of known providers only.
+func totalsCostChipHelp(_ rec: UsageRecord) -> String {
+    guard rec.details?.totals?.estimatedUsd != nil else {
+        return "Cost unavailable; not zero — no estimate reported"
+    }
+    if hasUnknownCostContributor(rec) {
+        return "Sum of known providers; \(unknownCostContributorCount(rec)) with unknown cost — total may be higher"
+    }
+    return "Recorded estimate: \(compactCost(rec.details?.totals?.estimatedUsd)); costs may be unreported by some providers"
+}
+
 // MARK: - B2: Workload helpers (free functions for testability)
 
 /// B2: Priority for task sorting (lower = appears first).
@@ -1815,8 +1861,10 @@ struct ContentView: View {
                 // F6: "Reported calls" not "Calls"
                 totalChip("Reported calls", rec.details?.totals?.calls.map(String.init) ?? "—",
                           help: rec.details?.totals?.calls.map { "\($0) reported calls" } ?? "")
-                totalChip("Est. USD", compactCost(rec.details?.totals?.estimatedUsd),
-                          help: costHelp(rec.details?.totals?.estimatedUsd))
+                // t_d59ed1ce: qualified when a contributing provider's cost is
+                // unknown — the chip never presents a partial sum as exact.
+                totalChip("Est. USD", totalsCostChipText(rec),
+                          help: totalsCostChipHelp(rec))
             }
             // R2: Total reasoning on its own full-width row below the 3-chip HStack
             if let reasoning = aggregateReasoning(rec) {

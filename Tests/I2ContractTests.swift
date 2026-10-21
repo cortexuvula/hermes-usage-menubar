@@ -918,6 +918,102 @@ struct I2Tests {
             expect(hasNilProviderCost(realWorldMixed), "F5 invariant: any nil provider detail → legend shown (aggregate known, legacy zero)")
         }
 
+        // t_d59ed1ce: qualified totals cost chip — gate true/false × totals
+        // non-nil/nil × unknown=0/>0, plus $0.00-not-qualified.
+        print("t_d59ed1ce: totalsCostChipText / totalsCostChipHelp gate matrix")
+        do {
+            func record(_ json: String) -> UsageRecord {
+                try! JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            }
+
+            // 1. Gate false, totals non-nil, no unknown rows → verbatim, unqualified.
+            let clean = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":1.46,\"latestStatusRows\":{\"estimated\":2,\"actual\":0,\"included\":0,\"unknown\":0}}," +
+                "\"providers\":{\"anthropic\":{\"estimatedUsd\":1.46}}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":100,\"estimatedCostUsd\":1.46}}}")
+            expect(!hasUnknownCostContributor(clean), "clean → gate false")
+            expect(totalsCostChipText(clean) == "$1.46", "clean → unqualified $1.46, got \(totalsCostChipText(clean))")
+            expect(totalsCostChipHelp(clean) == "Recorded estimate: $1.46; costs may be unreported by some providers",
+                   "clean → recorded-estimate help, got \(totalsCostChipHelp(clean))")
+
+            // 2. Gate true via nil provider cost, collector also reports unknown=1.
+            //    This is the card's exact scenario: totals sums only known rows.
+            let nilContributor = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.02,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.01},\"p2\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.01},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null}}}")
+            expect(hasUnknownCostContributor(nilContributor), "one nil provider → gate true")
+            expect(hasNilProviderCost(nilContributor), "same predicate as :1854 legend → legend also shows (chip/legend agree)")
+            expect(totalsCostChipText(nilContributor) == "≥ $0.02", "qualified chip ≥ $0.02, got \(totalsCostChipText(nilContributor))")
+            expect(totalsCostChipHelp(nilContributor) == "Sum of known providers; 1 with unknown cost — total may be higher",
+                   "qualified help with N from latestStatusRows, got \(totalsCostChipHelp(nilContributor))")
+
+            // 3. Gate true via latestStatusRows.unknown ONLY — provider-level
+            //    fold clean (all rows have costs) but the collector knows it
+            //    has unknown rows. N comes from the status breakdown (2).
+            let statusOnlyUnknown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.03,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":2}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.03}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.03}}}")
+            expect(!hasNilProviderCost(statusOnlyUnknown), "provider fold clean → F5 legend predicate false")
+            expect(hasUnknownCostContributor(statusOnlyUnknown), "unknown status row → gate still true")
+            expect(totalsCostChipText(statusOnlyUnknown) == "≥ $0.03", "status-only unknown → qualified chip, got \(totalsCostChipText(statusOnlyUnknown))")
+            expect(unknownCostContributorCount(statusOnlyUnknown) == 2, "N prefers latestStatusRows.unknown = 2")
+
+            // 4. Gate true via nil providers, NO status breakdown → N falls
+            //    back to counting nil-cost provider rows (2 nil).
+            let nilProvidersNoStatus = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.04},\"providers\":{\"p1\":{\"estimatedUsd\":0.04}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.04}," +
+                "\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null},\"p3\":{\"tokens\":10,\"estimatedCostUsd\":null}}}")
+            expect(hasUnknownCostContributor(nilProvidersNoStatus), "nil provider rows → gate true")
+            expect(unknownCostContributorCount(nilProvidersNoStatus) == 2, "N falls back to nil-provider count = 2, got \(unknownCostContributorCount(nilProvidersNoStatus))")
+            expect(totalsCostChipHelp(nilProvidersNoStatus) == "Sum of known providers; 2 with unknown cost — total may be higher",
+                   "fallback-N help, got \(totalsCostChipHelp(nilProvidersNoStatus))")
+
+            // 5. Totals nil → "—" and unrecorded help, unchanged regardless of gate.
+            let nilTotals = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":null,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":null}}}")
+            expect(hasUnknownCostContributor(nilTotals), "gate true (unknown contributors present)")
+            expect(totalsCostChipText(nilTotals) == "—", "totals nil → em dash even when gate true, got \(totalsCostChipText(nilTotals))")
+            expect(totalsCostChipHelp(nilTotals) == "Cost unavailable; not zero — no estimate reported",
+                   "totals nil help unchanged, got \(totalsCostChipHelp(nilTotals))")
+
+            // 6. Genuine $0.00 with NO unknowns must render "$0.00", not qualified —
+            //    the gate is about unknown contributors, not about zero.
+            let zeroKnown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.0,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":1,\"unknown\":0}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.0}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.0}}}")
+            expect(!hasUnknownCostContributor(zeroKnown), "$0.00 all-known → gate false")
+            expect(totalsCostChipText(zeroKnown) == "$0.00", "$0.00 stays $0.00, got \(totalsCostChipText(zeroKnown))")
+
+            // 7. $0.00 WITH an unknown contributor → gate fires (a known floor of
+            //    zero plus unknowns is still "may be higher").
+            let zeroUnknown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.0,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.0},\"p2\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.0},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null}}}")
+            expect(hasUnknownCostContributor(zeroUnknown), "$0.00 + unknown contributor → gate true")
+            expect(totalsCostChipText(zeroUnknown) == "≥ $0.00", "zero floor still qualified, got \(totalsCostChipText(zeroUnknown))")
+
+            // 8. No details at all → gate from legacy providerUsage nil row; chip —.
+            let noDetails = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":null}}}")
+            expect(hasUnknownCostContributor(noDetails), "legacy nil cost row → gate true")
+            expect(totalsCostChipText(noDetails) == "—", "no totals → em dash, got \(totalsCostChipText(noDetails))")
+        }
+
         // F3: formatWorkloadAccessibilitySummary names unavailable values explicitly
         print("F3: formatWorkloadAccessibilitySummary")
         do {
