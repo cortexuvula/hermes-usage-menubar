@@ -681,16 +681,60 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState,
 /// 0.0.0 with a derived build number. Surfaced in the copied receipt so
 /// "which build is running?" is answerable without hashing the executable.
 /// Failure to read the plist is stated honestly, never defaulted.
-func appVersionDescription() -> String {
-    guard let infoPlist = Bundle.main.infoDictionary,
-          let short = infoPlist["CFBundleShortVersionString"] as? String,
-          let build = infoPlist["CFBundleVersion"] as? String,
-          !short.isEmpty, !build.isEmpty
-    else {
-        return "version unavailable"
+///
+/// t_c9ec490a: this type is the single source of version identity for the
+/// receipt, the post-copy AX announcement, AND the More → About panel.
+/// The bundle plist is read exactly once, in `current`; every string the
+/// panel renders derives from that one read. The panel never re-reads
+/// Info.plist and never invents a value: a failed read renders
+/// "version unavailable" in every field, never an empty string.
+struct AppVersion: Equatable {
+    /// nil when the plist is unreadable or the key is missing/empty.
+    let shortVersion: String?
+    let build: String?
+
+    /// The ONE read of Bundle.main.infoDictionary (static let = read once).
+    static let current = AppVersion(infoDictionary: Bundle.main.infoDictionary)
+
+    /// Injectable init — tests drive the release / untagged-dev /
+    /// plist-failure paths without touching Bundle.main.
+    init(infoDictionary: [String: Any]?) {
+        let short = infoDictionary?["CFBundleShortVersionString"] as? String
+        let build = infoDictionary?["CFBundleVersion"] as? String
+        self.shortVersion = (short?.isEmpty == false) ? short : nil
+        self.build = (build?.isEmpty == false) ? build : nil
     }
-    return "\(short) (build \(build))"
+
+    /// Parity with t_b2280a32's single guard: identity is available only
+    /// when BOTH plist fields were read non-empty.
+    var isAvailable: Bool { shortVersion != nil && build != nil }
+
+    /// Untagged builds are stamped 0.0.0 by build.sh by design (no tag
+    /// exists), so 0.0.0 IS the dev-build signal — derived from the same
+    /// source the stamp came from, not from a separate marker.
+    var isDevBuild: Bool { shortVersion == "0.0.0" }
+
+    /// One-line identity used by the copied receipt and the post-copy AX
+    /// announcement. Byte-identical to t_b2280a32's rendered contract.
+    var description: String {
+        guard let short = shortVersion, let build = build else {
+            return "version unavailable"
+        }
+        return "\(short) (build \(build))"
+    }
+
+    // t_c9ec490a: per-field strings for the About panel. Each is honest
+    // on the failure path — "version unavailable", never empty.
+    var shortVersionDisplay: String { shortVersion ?? "version unavailable" }
+    var buildDisplay: String { build ?? "version unavailable" }
+    /// A dev build must be unmistakable and can never pose as a release.
+    var statusDisplay: String {
+        guard isAvailable else { return "version unavailable" }
+        return isDevBuild ? "Development build (untagged)" : "Release"
+    }
 }
+
+func appVersionDescription() -> String { AppVersion.current.description }
 
 /// F3: Format explicit accessibility summary for a workload row.
 /// Names unavailable values rather than relying on punctuation or inherited help.
@@ -1416,6 +1460,8 @@ struct WeekBars: View {
 struct ContentView: View {
     @EnvironmentObject var model: UsageModel
     @Environment(\.colorScheme) private var colorScheme
+    // t_c9ec490a: opens the About window scene declared in HermesUsageApp.
+    @Environment(\.openWindow) private var openWindow
     @State private var showAllModels = false
     @State private var clipboardCopied = false
     @State private var clipboardError: String?
@@ -2606,6 +2652,13 @@ struct ContentView: View {
                     .disabled(model.isLoading)
                     .keyboardShortcut("r", modifiers: .command)
                 Menu {
+                    // t_c9ec490a: About entry point — the ONLY new surface.
+                    // The version path behind it (AppVersion) is the same
+                    // single plist read the receipt uses; nothing about the
+                    // copied receipt or its announcement changes.
+                    Button("About Hermes Usage") {
+                        openWindow(id: "about")
+                    }
                     Button("Copy usage summary") {
                         // Cancel any pending feedback timer
                         feedbackTimer?.cancel()
@@ -2655,7 +2708,7 @@ struct ContentView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("More (copy summary or quit)")
+                .help("More (about, copy summary or quit)")
             }
         }
         .padding(14)
