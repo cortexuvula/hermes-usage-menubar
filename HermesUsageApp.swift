@@ -16,6 +16,16 @@ struct HermesUsageApp: App {
             MenuBarLabelView(model: model)
         }
         .menuBarExtraStyle(.window)
+
+        // t_c9ec490a: standard About window, opened from the popover
+        // footer's More menu. A real Window scene — not a popover section —
+        // so it does not inherit ContentView's fixed 340 pt popover width,
+        // auto-sizes with the content at large accessibility text sizes,
+        // and is user-resizable (.contentMinSize).
+        Window("About Hermes Usage", id: "about") {
+            AboutPanel(version: .current)
+        }
+        .windowResizability(.contentMinSize)
     }
 
     private var statusText: String {
@@ -44,6 +54,65 @@ struct HermesUsageApp: App {
         }
         parts.append("Estimated, not billed")
         return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - t_c9ec490a: About panel
+
+/// Standard About panel: app name, one-line description, version, build,
+/// and development status. Every version value comes from `AppVersion` —
+/// the single bundle-plist reader the copied receipt uses — so the panel
+/// adds no data path of its own. AX contract: each value is its own
+/// `Text` (a real AXStaticText per value, never a merged blob or a drawn
+/// glyph); the icon is decorative and AX-hidden. No fixed height and only
+/// a minimum width, so the window grows with the content at large system
+/// text sizes instead of clipping.
+struct AboutPanel: View {
+    let version: AppVersion
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 96, height: 96)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 6) {
+                Text("Hermes Usage")
+                    .font(.title2.weight(.semibold))
+                Text("Menu-bar summary of local Hermes Agent usage on this Mac.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+                .frame(width: 220)
+
+            VStack(spacing: 8) {
+                aboutRow(label: "Version", value: version.shortVersionDisplay)
+                aboutRow(label: "Build", value: version.buildDisplay)
+                aboutRow(label: "Status", value: version.statusDisplay)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 300)
+    }
+
+    /// One label Text + one value Text per row — two distinct AXStaticTexts,
+    /// so screen readers announce each field separately.
+    private func aboutRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 24)
+            Text(value)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: 380, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

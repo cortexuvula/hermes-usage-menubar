@@ -30,6 +30,12 @@ xcrun swiftc -O -parse-as-library -target arm64-apple-macos13.0 \
   HermesUsage.swift Tests/I2ContractTests.swift -o "$BUILD_DIR/i2tests"
 "$BUILD_DIR/i2tests"
 
+echo "==> Building About version identity tests (t_c9ec490a)"
+xcrun swiftc -O -parse-as-library -target arm64-apple-macos13.0 \
+  -framework SwiftUI -framework AppKit \
+  HermesUsage.swift Tests/AboutVersionTests.swift -o "$BUILD_DIR/abouttests"
+"$BUILD_DIR/abouttests"
+
 echo "==> Bundle validation (build + install both redirected; repo untouched)"
 # Seed a throwaway COLLECTOR_SRC from the tracked copies so no upstream
 # checkout is needed.
