@@ -513,7 +513,15 @@ def scan_store(conn: sqlite3.Connection, acc: Accumulator) -> None:
         acc.add_tokens(model, bucket)
         add_detail(acc.details, row, total)
         add_group(acc.task_details, 'unknown' if row['task'] is None else (row['task'] or 'ordinary'), row, total)
-        add_group(acc.provider_details, row['billing_provider'] or 'unknown', row, total)
+        # t_8b4c98d0: the details provider fold MUST share the providerUsage
+        # key space — same normalizer (clean_provider: blank -> "local",
+        # 32-char truncation) and same cap (MAX_MODELS=64, not add_group's
+        # default 32). The old `raw or 'unknown'` key at cap 32 keyed the
+        # same rows as "unknown" while providerUsage keyed them "local", and
+        # dropped every provider ranked 33-64 entirely, so the app's re-fold
+        # (HermesUsage.swift resolveProviderCost) resolved nil for providers
+        # whose cost IS known — "—" rows and a falsely qualified totals chip.
+        add_group(acc.provider_details, clean_provider(row['billing_provider']), row, total, cap=MAX_MODELS)
 
         provider = clean_provider(row["billing_provider"] if "billing_provider" in row.keys() else "")
         if provider not in acc.provider_tokens and len(acc.provider_tokens) >= MAX_MODELS - 1:
