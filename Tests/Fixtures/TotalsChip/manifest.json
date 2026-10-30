@@ -1,0 +1,41 @@
+{
+  "source": "t_d59ed1ce/rig-d59e1ce/fixtures/manifest.json @ dd84bbe; historical captures remain immutable",
+  "purpose": "Current capture expectations; help units corrected by t_f48b329a. t9-qualified-chip is the historical malformed-input control, not collector-realistic.",
+  "totals_expectations": {
+    "t9-qualified-chip.json": {
+      "totals.tokens": 2000,
+      "totals.estimatedUsd": 0.02,
+      "totals.calls": 2,
+      "expect_total_tokens_chip": "2.0k",
+      "expect_total_cost_chip": "\u2265 $0.02",
+      "expect_cost_chip_help": "Sum of known providers; 1 usage row with unknown cost \u2014 total may be higher",
+      "expect_cost_legend": "\u2014 Cost unavailable; not zero",
+      "expect_provider_row_cost": "\u2014",
+      "question": "numeric totals + one unknown contributor -> qualified chip, never exact"
+    },
+    "t9-widest-qualified.json": {
+      "totals.estimatedUsd": 12345.67,
+      "expect_total_cost_chip": "\u2265 $12345.67",
+      "expect_cost_chip_help": "Sum of known providers; 1 usage row with unknown cost \u2014 total may be higher",
+      "question": "widest realistic qualified chip must not clip/wrap at 340 px"
+    },
+    "t9-collector-realistic.json": {
+      "totals.tokens": 2000,
+      "totals.estimatedUsd": 0.01,
+      "totals.calls": 2,
+      "expect_total_tokens_chip": "2.0k",
+      "expect_total_cost_chip": "\u2265 $0.01",
+      "expect_cost_chip_help": "Sum of known providers; 1 usage row with unknown cost \u2014 total may be higher",
+      "expect_cost_legend": "\u2014 Cost unavailable; not zero",
+      "expect_provider_row_cost": "\u2014",
+      "question": "collector-realistic numeric totals (known sum S=0.01, U=1 unknown) -> qualified '\u2265 $0.01', never bare $0.01"
+    },
+    "t9-zero-known.json": {
+      "totals.estimatedUsd": 0.0,
+      "expect_total_cost_chip": "$0.00",
+      "expect_cost_chip_help": "Recorded estimate: $0.00; costs may be unreported by some providers",
+      "expect_cost_legend": null,
+      "question": "genuine $0.00 all-known -> unqualified $0.00, no legend"
+    }
+  }
+}
