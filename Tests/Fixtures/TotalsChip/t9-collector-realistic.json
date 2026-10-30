@@ -1,0 +1,92 @@
+{
+  "id": "hermes",
+  "name": "Hermes Agent",
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-20T21:00:00Z",
+  "hasLocalStats": true,
+  "todayPrompts": 3,
+  "todaySessions": 1,
+  "todayTotalTokens": 2000,
+  "todayTokensByModel": {
+    "alpha-model": 2000
+  },
+  "recentDays": [
+    {
+      "date": "2026-10-20",
+      "messageCount": 3
+    }
+  ],
+  "totalPrompts": 3,
+  "totalSessions": 1,
+  "activeDays": 1,
+  "modelUsage": {
+    "alpha-model": {
+      "inputTokens": 1000,
+      "outputTokens": 1000,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0
+    }
+  },
+  "providerUsage": {
+    "acmecloud-gateway-primary-replic": {
+      "tokens": 2000,
+      "estimatedCostUsd": 0.01
+    }
+  },
+  "accounts": [],
+  "details": {
+    "totals": {
+      "rows": 2,
+      "calls": 2,
+      "unknownCallRows": 0,
+      "tokens": 2000,
+      "reasoning": 0,
+      "cacheRead": 0,
+      "estimatedUsd": 0.01,
+      "latestStatusRows": {
+        "estimated": 1,
+        "actual": 0,
+        "included": 0,
+        "unknown": 1
+      }
+    },
+    "providers": {
+      "acmecloud-gateway-primary-replica-a": {
+        "rows": 1,
+        "calls": 1,
+        "unknownCallRows": 0,
+        "tokens": 1000,
+        "reasoning": 0,
+        "cacheRead": 0,
+        "estimatedUsd": 0.01,
+        "actualUsd": null,
+        "latestStatusRows": {
+          "estimated": 1,
+          "actual": 0,
+          "included": 0,
+          "unknown": 0
+        }
+      },
+      "acmecloud-gateway-primary-replica-b": {
+        "rows": 1,
+        "calls": 1,
+        "unknownCallRows": 0,
+        "tokens": 1000,
+        "reasoning": 0,
+        "cacheRead": 0,
+        "estimatedUsd": null,
+        "actualUsd": null,
+        "latestStatusRows": {
+          "estimated": 0,
+          "actual": 0,
+          "included": 0,
+          "unknown": 1
+        }
+      }
+    },
+    "tasks": {},
+    "scope": "device",
+    "coverage": "bounded local history",
+    "truncated": false
+  }
+}

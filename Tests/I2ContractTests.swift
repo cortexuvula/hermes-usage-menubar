@@ -947,7 +947,7 @@ struct I2Tests {
             expect(hasUnknownCostContributor(nilContributor), "one nil provider → gate true")
             expect(hasNilProviderCost(nilContributor), "same predicate as :1854 legend → legend also shows (chip/legend agree)")
             expect(totalsCostChipText(nilContributor) == "≥ $0.02", "qualified chip ≥ $0.02, got \(totalsCostChipText(nilContributor))")
-            expect(totalsCostChipHelp(nilContributor) == "Sum of known providers; 1 with unknown cost — total may be higher",
+            expect(totalsCostChipHelp(nilContributor) == "Sum of known providers; 1 usage row with unknown cost — total may be higher",
                    "qualified help with N from latestStatusRows, got \(totalsCostChipHelp(nilContributor))")
 
             // 3. Gate true via latestStatusRows.unknown ONLY — provider-level
@@ -972,8 +972,33 @@ struct I2Tests {
                 "\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null},\"p3\":{\"tokens\":10,\"estimatedCostUsd\":null}}}")
             expect(hasUnknownCostContributor(nilProvidersNoStatus), "nil provider rows → gate true")
             expect(unknownCostContributorCount(nilProvidersNoStatus) == 2, "N falls back to nil-provider count = 2, got \(unknownCostContributorCount(nilProvidersNoStatus))")
-            expect(totalsCostChipHelp(nilProvidersNoStatus) == "Sum of known providers; 2 with unknown cost — total may be higher",
+            expect(totalsCostChipHelp(nilProvidersNoStatus) == "Sum of known providers; 2 providers with unknown cost — total may be higher",
                    "fallback-N help, got \(totalsCostChipHelp(nilProvidersNoStatus))")
+
+            // t_f48b329a: one unknown provider can represent several usage rows.
+            let ghost = record(#"{"id":"hermes","name":"Hermes Agent","schemaVersion":1,"hasLocalStats":true,"details":{"totals":{"estimatedUsd":0.01,"latestStatusRows":{"estimated":1,"unknown":3}},"providers":{"known":{"estimatedUsd":0.01},"ghost":{"estimatedUsd":null}}},"providerUsage":{"known":{"tokens":100,"estimatedCostUsd":0.01},"ghost":{"tokens":30,"estimatedCostUsd":null}}}"#)
+            let ghostHelp = "Sum of known providers; 3 usage rows with unknown cost — total may be higher"
+            expect(totalsCostChipHelp(ghost) == ghostHelp, "three unknown rows, not three providers: exact help")
+            let disclosure = formatRowStatusBreakdown(ghost.details?.totals?.latestStatusRows)
+            expect(disclosure == "1 with estimated cost, 3 usage rows with unknown cost", "disclosure names the same usage-row unit")
+            expect(totalsCostChipHelp(ghost).contains(disclosure!.components(separatedBy: ", ").last!), "chip and disclosure share identical unknown-cost wording")
+            expect(totalsCostChipText(ghost) == "≥ $0.01", "collector-realistic ghost retains glyph and value")
+            expect(formatRowStatusBreakdown(["unknown": 1]) == "1 usage row with unknown cost", "singular disclosure agrees with singular chip help")
+            expect(totalsCostChipHelp(statusOnlyUnknown) == "Sum of known providers; 2 usage rows with unknown cost — total may be higher", "numeric provider with unknown observations still counts usage rows")
+            let zeroStatus = record(#"{"id":"hermes","name":"Hermes Agent","details":{"totals":{"estimatedUsd":0.01,"latestStatusRows":{"unknown":0}},"providers":{"known":{"estimatedUsd":0.01}}},"providerUsage":{"known":{"estimatedCostUsd":0.01},"ghost":{"estimatedCostUsd":null}}}"#)
+            expect(totalsCostChipHelp(zeroStatus) == "Sum of known providers; 1 provider with unknown cost — total may be higher", "zero unknown observations uses singular provider fallback")
+
+            // Keep the imported native-capture manifest tied to rendered helpers.
+            let fixtureRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+                .appendingPathComponent("Fixtures/TotalsChip")
+            let manifest = try! JSONSerialization.jsonObject(with: Data(contentsOf: fixtureRoot.appendingPathComponent("manifest.json"))) as! [String: Any]
+            let expectations = manifest["totals_expectations"] as! [String: [String: Any]]
+            expect(expectations.count == 4, "all four historical t9 capture controls retained")
+            for name in expectations.keys.sorted() {
+                let fixture = try! JSONDecoder().decode(UsageRecord.self, from: Data(contentsOf: fixtureRoot.appendingPathComponent(name)))
+                expect(totalsCostChipHelp(fixture) == expectations[name]!["expect_cost_chip_help"] as? String, "\(name): current capture help expectation")
+                expect(totalsCostChipText(fixture) == expectations[name]!["expect_total_cost_chip"] as? String, "\(name): capture glyph/value unchanged")
+            }
 
             // 5. Totals nil → "—" and unrecorded help, unchanged regardless of gate.
             let nilTotals = record(

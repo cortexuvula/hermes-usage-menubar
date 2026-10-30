@@ -437,16 +437,20 @@ func hasUnknownCostContributor(_ rec: UsageRecord) -> Bool {
     return (rec.details?.totals?.latestStatusRows?["unknown"] ?? 0) > 0
 }
 
-/// t_d59ed1ce: Count of unknown contributors for the qualified help text.
-/// Prefers the collector's own status breakdown when it reports any unknown
-/// row; falls back to counting nil-cost provider rows via the same
-/// resolveProviderCost fold the section uses.
+/// Count for the qualified help text: usage rows when unknown status is positive,
+/// otherwise nil-cost providers. Callers must name the matching unit.
+/// The fallback uses the same resolveProviderCost fold as the provider section.
 func unknownCostContributorCount(_ rec: UsageRecord) -> Int {
     if let unknown = rec.details?.totals?.latestStatusRows?["unknown"], unknown > 0 { return unknown }
     guard let providerUsage = rec.providerUsage else { return 0 }
     return providerUsage.keys.count { name in
         resolveProviderCost(rec: rec, providerName: name, legacyCost: providerUsage[name]?.estimatedCostUsd) == nil
     }
+}
+
+/// Shared wording for the chip help and accounting-evidence disclosure.
+func unknownCostRowsDescription(_ count: Int) -> String {
+    "\(count) usage \(count == 1 ? "row" : "rows") with unknown cost"
 }
 
 /// t_d59ed1ce: Chip text for the Collected-history Est. USD total.
@@ -466,7 +470,14 @@ func totalsCostChipHelp(_ rec: UsageRecord) -> String {
         return "Cost unavailable; not zero — no estimate reported"
     }
     if hasUnknownCostContributor(rec) {
-        return "Sum of known providers; \(unknownCostContributorCount(rec)) with unknown cost — total may be higher"
+        let count = unknownCostContributorCount(rec)
+        let unknowns: String
+        if (rec.details?.totals?.latestStatusRows?["unknown"] ?? 0) > 0 {
+            unknowns = unknownCostRowsDescription(count)
+        } else {
+            unknowns = "\(count) \(count == 1 ? "provider" : "providers") with unknown cost"
+        }
+        return "Sum of known providers; \(unknowns) — total may be higher"
     }
     return "Recorded estimate: \(compactCost(rec.details?.totals?.estimatedUsd)); costs may be unreported by some providers"
 }
@@ -520,7 +531,7 @@ func formatRowStatusBreakdown(_ statusRows: [String: Int]?) -> String? {
         parts.append("\(included) subscription-included")
     }
     if let unknown = rows["unknown"], unknown > 0 {
-        parts.append("\(unknown) with unknown cost status")
+        parts.append(unknownCostRowsDescription(unknown))
     }
 
     return parts.isEmpty ? nil : parts.joined(separator: ", ")
