@@ -453,6 +453,19 @@ func unknownCostRowsDescription(_ count: Int) -> String {
     "\(count) usage \(count == 1 ? "row" : "rows") with unknown cost"
 }
 
+/// t_86335d26: the unknown-contributor phrase shared by the chip help
+/// (totalsCostChipHelp) and the clipboard receipt's Estimated-cost
+/// qualifier, so the two surfaces can never drift apart. Count and unit
+/// follow the chip's existing rule: latestStatusRows.unknown when positive,
+/// else the count of nil-cost provider rows.
+func unknownCostContributorPhrase(_ rec: UsageRecord) -> String {
+    let count = unknownCostContributorCount(rec)
+    if (rec.details?.totals?.latestStatusRows?["unknown"] ?? 0) > 0 {
+        return unknownCostRowsDescription(count)
+    }
+    return "\(count) \(count == 1 ? "provider" : "providers") with unknown cost"
+}
+
 /// t_d59ed1ce: Chip text for the Collected-history Est. USD total.
 /// Gate false → compactCost unchanged (a genuine $0.00 stays "$0.00" — the
 /// gate is about unknown contributors, not about zero). Gate true with a
@@ -470,14 +483,7 @@ func totalsCostChipHelp(_ rec: UsageRecord) -> String {
         return "Cost unavailable; not zero — no estimate reported"
     }
     if hasUnknownCostContributor(rec) {
-        let count = unknownCostContributorCount(rec)
-        let unknowns: String
-        if (rec.details?.totals?.latestStatusRows?["unknown"] ?? 0) > 0 {
-            unknowns = unknownCostRowsDescription(count)
-        } else {
-            unknowns = "\(count) \(count == 1 ? "provider" : "providers") with unknown cost"
-        }
-        return "Sum of known providers; \(unknowns) — total may be higher"
+        return "Sum of known providers; \(unknownCostContributorPhrase(rec)) — total may be higher"
     }
     return "Recorded estimate: \(compactCost(rec.details?.totals?.estimatedUsd)); costs may be unreported by some providers"
 }
@@ -640,7 +646,18 @@ func formatUsageReceipt(_ rec: UsageRecord, loadState: UsageModel.LoadState,
         }
 
         if let estUsd = totals.estimatedUsd {
-            lines.append("Estimated cost: \(compactCost(estUsd)) (not invoice reconciliation)")
+            // t_86335d26: mirror the totals chip when the unknown-cost gate
+            // fires — same gate (hasUnknownCostContributor), same "≥" number
+            // (totalsCostChipText), same known-providers wording — so the
+            // copied receipt and the on-screen chip can never disagree when
+            // produced from one record. Unqualified receipts stay
+            // byte-identical; the recorded number itself is never altered,
+            // only qualified.
+            if hasUnknownCostContributor(rec) {
+                lines.append("Estimated cost: \(totalsCostChipText(rec)) (sum of known providers; \(unknownCostContributorPhrase(rec)) — total may be higher; not invoice reconciliation)")
+            } else {
+                lines.append("Estimated cost: \(compactCost(estUsd)) (not invoice reconciliation)")
+            }
         } else {
             lines.append("Estimated cost: unavailable")
         }
