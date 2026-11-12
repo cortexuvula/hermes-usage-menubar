@@ -1039,6 +1039,109 @@ struct I2Tests {
             expect(totalsCostChipText(noDetails) == "—", "no totals → em dash, got \(totalsCostChipText(noDetails))")
         }
 
+        // t_86335d26: the clipboard receipt mirrors the totals-chip
+        // unknown-cost qualifier — same gate, same "≥" number, same wording —
+        // while fully-known receipts stay byte-identical and the per-provider
+        // surface stays the unqualified aggregate count (accepted behavior).
+        print("t_86335d26: formatUsageReceipt mirrors totals-chip qualifier")
+        do {
+            func record(_ json: String) -> UsageRecord {
+                try! JSONDecoder().decode(UsageRecord.self, from: jsonData(json))
+            }
+            func estLine(_ receipt: String) -> String {
+                receipt.components(separatedBy: "\n").first { $0.hasPrefix("Estimated cost: ") } ?? "<no Estimated cost line>"
+            }
+
+            // 1. Gate false × totals non-nil (fully known) → byte-identical line.
+            let clean = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":1.46,\"latestStatusRows\":{\"estimated\":2,\"actual\":0,\"included\":0,\"unknown\":0}}," +
+                "\"providers\":{\"anthropic\":{\"estimatedUsd\":1.46}}}," +
+                "\"providerUsage\":{\"anthropic\":{\"tokens\":100,\"estimatedCostUsd\":1.46}}}")
+            let cleanReceipt = formatUsageReceipt(clean, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(cleanReceipt) == "Estimated cost: $1.46 (not invoice reconciliation)",
+                   "fully-known receipt line unchanged, got \(estLine(cleanReceipt))")
+            expect(!cleanReceipt.contains("≥") && !cleanReceipt.contains("sum of known providers"),
+                   "fully-known receipt carries no qualifier")
+
+            // 2. Gate true via nil provider cost (+unknown=1) → chip-exact mirror.
+            let nilContributor = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.02,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.01},\"p2\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.01},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null}}}")
+            let qualifiedReceipt = formatUsageReceipt(nilContributor, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(qualifiedReceipt) == "Estimated cost: ≥ $0.02 (sum of known providers; 1 usage row with unknown cost — total may be higher; not invoice reconciliation)",
+                   "nil-contributor receipt mirrors chip number+wording, got \(estLine(qualifiedReceipt))")
+            expect(qualifiedReceipt.contains(totalsCostChipText(nilContributor)),
+                   "receipt embeds the chip's exact qualified number '\(totalsCostChipText(nilContributor))'")
+
+            // 3. Gate true via latestStatusRows.unknown only (provider fold clean).
+            let statusOnlyUnknown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.03,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":2}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.03}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.03}}}")
+            let statusReceipt = formatUsageReceipt(statusOnlyUnknown, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(statusReceipt) == "Estimated cost: ≥ $0.03 (sum of known providers; 2 usage rows with unknown cost — total may be higher; not invoice reconciliation)",
+                   "status-only unknown mirrors chip with usage-row count, got \(estLine(statusReceipt))")
+            expect(statusReceipt.contains(totalsCostChipText(statusOnlyUnknown)),
+                   "status-only receipt embeds chip number '\(totalsCostChipText(statusOnlyUnknown))'")
+
+            // 4. Gate true via nil providers, no status breakdown → provider-count wording.
+            let nilProvidersNoStatus = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.04},\"providers\":{\"p1\":{\"estimatedUsd\":0.04}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.04}," +
+                "\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null},\"p3\":{\"tokens\":10,\"estimatedCostUsd\":null}}}")
+            let fallbackReceipt = formatUsageReceipt(nilProvidersNoStatus, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(fallbackReceipt) == "Estimated cost: ≥ $0.04 (sum of known providers; 2 providers with unknown cost — total may be higher; not invoice reconciliation)",
+                   "fallback count mirrors chip provider wording, got \(estLine(fallbackReceipt))")
+
+            // 5. Genuine $0.00 with no unknowns stays unqualified — zero is not the gate.
+            let zeroKnown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.0,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":1,\"unknown\":0}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.0}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.0}}}")
+            let zeroReceipt = formatUsageReceipt(zeroKnown, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(zeroReceipt) == "Estimated cost: $0.00 (not invoice reconciliation)",
+                   "genuine zero stays unqualified, got \(estLine(zeroReceipt))")
+            expect(!zeroReceipt.contains("≥"), "genuine zero carries no ≥ glyph")
+
+            // 6. $0.00 WITH an unknown contributor → qualified floor, chip parity.
+            let zeroUnknown = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":0.0,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":0.0},\"p2\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":0.0},\"p2\":{\"tokens\":50,\"estimatedCostUsd\":null}}}")
+            let zeroQualified = formatUsageReceipt(zeroUnknown, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(zeroQualified) == "Estimated cost: ≥ $0.00 (sum of known providers; 1 usage row with unknown cost — total may be higher; not invoice reconciliation)",
+                   "zero floor qualified like the chip, got \(estLine(zeroQualified))")
+
+            // 7. Gate true × totals nil → no number exists; "unavailable" unchanged.
+            let nilTotals = record(
+                "{\"id\":\"hermes\",\"name\":\"Hermes Agent\",\"schemaVersion\":1,\"hasLocalStats\":true," +
+                "\"details\":{\"totals\":{\"estimatedUsd\":null,\"latestStatusRows\":{\"estimated\":1,\"actual\":0,\"included\":0,\"unknown\":1}}," +
+                "\"providers\":{\"p1\":{\"estimatedUsd\":null}}}," +
+                "\"providerUsage\":{\"p1\":{\"tokens\":100,\"estimatedCostUsd\":null}}}")
+            let nilTotalsReceipt = formatUsageReceipt(nilTotals, loadState: .success, launchScope: .appDefaultRoot)
+            expect(estLine(nilTotalsReceipt) == "Estimated cost: unavailable",
+                   "nil totals stays 'unavailable' even when gate true, got \(estLine(nilTotalsReceipt))")
+            expect(!nilTotalsReceipt.contains("≥"), "no ≥ glyph when there is no number to qualify")
+
+            // 8. Stale load state: the retained record still carries the qualifier.
+            let staleReceipt = formatUsageReceipt(nilContributor, loadState: .stale("refresh failed"), launchScope: .appDefaultRoot)
+            expect(estLine(staleReceipt).hasPrefix("Estimated cost: ≥ $0.02 (sum of known providers;"),
+                   "stale receipt retains the qualified total, got \(estLine(staleReceipt))")
+
+            // 9. Per-provider surface unchanged: aggregate count only, no identifiers.
+            expect(qualifiedReceipt.contains("Providers: 2 providers"),
+                   "provider aggregate line unchanged")
+            expect(!qualifiedReceipt.contains("p1") && !qualifiedReceipt.contains("p2"),
+                   "no per-provider identifiers leak into the receipt")
+        }
+
         // F3: formatWorkloadAccessibilitySummary names unavailable values explicitly
         print("F3: formatWorkloadAccessibilitySummary")
         do {
